@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #09090b;
+  --color-foreground: #fafafa;
+  
+  --color-card: #111113;
+  --color-card-foreground: #fafafa;
+  
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #fafafa;
+  
+  --color-border: #1d1d20;
+  --color-muted: #18181b;
+  --color-muted-foreground: #a1a1aa;
+  
+  --color-white: #fafafa;
+  --color-black: #09090b;
+  
+  --font-sans: var(--font-montserrat);
+}
+
+:root {
+  color-scheme: dark !important;
+}
+
+/* Base Styles */
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Strict Typography Enforcement */
+* {
+  font-style: normal !important;
+}
+
+/* Prevent implicit dark mode completely by omitting the dark media query */

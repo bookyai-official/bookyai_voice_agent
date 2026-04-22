@@ -1,0 +1,26 @@
+# Node.js
+client/node_modules/
+client/.next/
+client/dist/
+client/.env
+client/.env.local
+
+# Python
+server/venv/
+server/__pycache__/
+server/*.pyc
+server/.env
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Database
+*.sqlite3
