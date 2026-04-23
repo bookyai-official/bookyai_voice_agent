@@ -4,10 +4,9 @@ from datetime import datetime, timezone
 from models.base import Base
 
 class CallRecord(Base):
-    __tablename__ = "call_records"
-
+    __tablename__ = "voice_agent_callrecord"
     id = Column(Integer, primary_key=True, index=True)
-    agent_id = Column(Integer, ForeignKey("voice_agents.id"), nullable=False)
+    agent_id = Column(Integer, ForeignKey("voice_agent_voiceagent.id"), nullable=False)
     call_sid = Column(String(100), unique=True, index=True, nullable=False)
     from_number = Column(String(50), nullable=True)
     to_number = Column(String(50), nullable=True)

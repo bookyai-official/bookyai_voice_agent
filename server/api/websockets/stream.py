@@ -128,6 +128,9 @@ async def twilio_media_stream(websocket: WebSocket, agent_id: int):
     except Exception as e:
         logger.error(f"WebSocket stream error: {e}")
     finally:
+        # Give a small grace period for any pending transcriptions to arrive
+        await asyncio.sleep(2.0)
+        
         transcript = []
         if openai_client:
             transcript = openai_client.get_transcript()

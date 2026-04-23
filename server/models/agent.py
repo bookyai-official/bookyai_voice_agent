@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 from models.base import Base
 
 class VoiceAgent(Base):
-    __tablename__ = "voice_agents"
-
+    __tablename__ = "voice_agent_voiceagent"
     id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, nullable=True) # ForeignKey to Django Business model
     name = Column(String(100), nullable=False)
     system_prompt = Column(Text, nullable=False)
     voice = Column(String(50), default="alloy")

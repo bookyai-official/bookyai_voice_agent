@@ -90,5 +90,20 @@ export const api = {
       if (!res.ok) throw new Error("Failed to fetch call detail");
       return res.json();
     }
+  },
+  chat: {
+    send: async (agentId, messages, previousResponseId = null) => {
+      const payload = { messages };
+      if (previousResponseId) {
+        payload.previous_response_id = previousResponseId;
+      }
+      const res = await fetch(`${API_URL}/chat/${agentId}`, {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("Failed to send message");
+      return res.json();
+    }
   }
 };

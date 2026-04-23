@@ -10,7 +10,7 @@ import models.agent
 import models.call
 import models.tool
 
-from api.routes import agent, call, tool
+from api.routes import agent, call, tool, chat
 from api.websockets import stream, webcall
 
 # Configure logging
@@ -37,6 +37,7 @@ app.add_middleware(
 app.include_router(agent.router, prefix="/api")
 app.include_router(tool.router, prefix="/api")
 app.include_router(call.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
 app.include_router(stream.router)   # Twilio WS router
 app.include_router(webcall.router)  # Browser WS router
 
@@ -44,10 +45,8 @@ app.include_router(webcall.router)  # Browser WS router
 async def startup_event():
     logger.info("Starting up Voice Agent Service...")
     try:
-        # By default, use SQLAlchemy async engine to create tables if they don't exist
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database checked/initialized successfully.")
+        # Tables are now managed by Django migrations
+        logger.info("Database connection established.")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
         logger.warning("Service starting with local DB error. Some endpoints may fail until DB is fixed.")

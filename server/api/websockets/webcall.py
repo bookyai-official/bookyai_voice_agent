@@ -217,6 +217,9 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
                 await websocket.send_json({"type": "session_end"})
             except:
                 pass
+        else:
+            # If browser stopped first, wait a bit for any pending OpenAI events (like final transcription)
+            await asyncio.sleep(2.0)
 
         # Cleanup pending task
         for task in pending:
@@ -280,12 +283,18 @@ async def _relay_openai_to_browser(openai_ws, browser_ws, tool_configs: dict, ag
                 await browser_ws.send_json({"type": "audio_done"})
 
             # User transcription (Whisper)
-            elif event_type == "conversation.item.input_audio_transcription.completed":
-                text = event.get("transcript", "").strip()
-                if text:
-                    logger.info(f"[WEB CALL] [Agent {agent_id}] USER  : {text}")
-                    transcript.append({"role": "user", "text": text})
-                    await browser_ws.send_json({"type": "transcript", "role": "user", "text": text})
+            elif event_type.startswith("conversation.item.input_audio_transcription."):
+                if event_type == "conversation.item.input_audio_transcription.completed":
+                    text = event.get("transcript", "").strip()
+                    if text:
+                        logger.info(f"[WEB CALL] [Agent {agent_id}] USER  : {text}")
+                        transcript.append({"role": "user", "text": text})
+                        await browser_ws.send_json({"type": "transcript", "role": "user", "text": text})
+                    else:
+                        logger.debug(f"[WEB CALL] [Agent {agent_id}] Empty user transcript received.")
+                elif event_type == "conversation.item.input_audio_transcription.failed":
+                    error = event.get("error", {})
+                    logger.error(f"[WEB CALL] [Agent {agent_id}] User transcription failed: {error}")
 
             # Agent transcription
             elif event_type == "response.audio_transcript.done":

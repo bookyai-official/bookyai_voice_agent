@@ -4,10 +4,9 @@ from datetime import datetime, timezone
 from models.base import Base
 
 class AgentTool(Base):
-    __tablename__ = "agent_tools"
-
+    __tablename__ = "voice_agent_agenttool"
     id = Column(Integer, primary_key=True, index=True)
-    agent_id = Column(Integer, ForeignKey("voice_agents.id", ondelete="CASCADE"), nullable=False)
+    agent_id = Column(Integer, ForeignKey("voice_agent_voiceagent.id", ondelete="CASCADE"), nullable=False)
     
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=False)

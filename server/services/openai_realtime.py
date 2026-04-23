@@ -93,6 +93,9 @@ class OpenAIRealtimeClient:
             async for message in self.ws:
                 event = json.loads(message)
                 event_type = event.get("type")
+                
+                # Log all non-media events for debugging
+                logger.info(f"[OPENAI] Event: {event_type}")
 
                 # Handle audio output (stream direct to Twilio)
                 if event_type == "response.audio.delta":
@@ -188,12 +191,15 @@ class OpenAIRealtimeClient:
                         self.transcript_log.append({"role": "assistant", "text": transcript})
                         logger.info(f"Agent Transcript: {transcript}")
                 
-                # Handle User Transcription (Whisper)
-                elif event_type == "conversation.item.input_audio_transcription.completed":
-                    transcript = event.get('transcript')
-                    if transcript:
-                        self.transcript_log.append({"role": "user", "text": transcript})
-                        logger.info(f"User Transcript: {transcript}")
+                # Handle User Transcription (Async)
+                elif event_type.startswith("conversation.item.input_audio_transcription."):
+                    if event_type == "conversation.item.input_audio_transcription.completed":
+                        user_text = event.get('transcript', '').strip()
+                        if user_text:
+                            self.transcript_log.append({"role": "user", "text": user_text})
+                            logger.info(f"[OPENAI] User Transcript (Final): {user_text}")
+                    elif event_type == "conversation.item.input_audio_transcription.failed":
+                        logger.error(f"[OPENAI] User transcription failed: {event.get('error')}")
 
                 # Handle Usage Tracking
                 elif event_type == "response.done":
