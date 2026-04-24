@@ -139,10 +139,11 @@ class OpenAIRealtimeClient:
                         logger.info(f"[TOOL] Ending call {twilio_call_sid}")
                         if twilio_client and twilio_call_sid:
                             try:
-                                # We wrap in a thread to avoid blocking async loop if possible, 
-                                # but usually twilio-python is synchronous. 
-                                # In a real prod environment we'd use an async client.
-                                twilio_client.calls(twilio_call_sid).update(status='completed')
+                                # Wrap synchronous Twilio call in a thread to avoid blocking the async loop
+                                await asyncio.to_thread(
+                                    twilio_client.calls(twilio_call_sid).update, 
+                                    status='completed'
+                                )
                             except Exception as te:
                                 logger.error(f"Twilio Hangup Error: {te}")
                         result_str = json.dumps({"status": "success", "message": "Call hung up"})
@@ -152,7 +153,8 @@ class OpenAIRealtimeClient:
                         logger.info(f"[TOOL] Transferring call {twilio_call_sid} to {target}")
                         if twilio_client and twilio_call_sid and target:
                             try:
-                                twilio_client.calls(twilio_call_sid).update(
+                                await asyncio.to_thread(
+                                    twilio_client.calls(twilio_call_sid).update,
                                     twiml=f'<Response><Dial>{target}</Dial></Response>'
                                 )
                             except Exception as te:
