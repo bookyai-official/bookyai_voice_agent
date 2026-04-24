@@ -12,11 +12,13 @@ logger = logging.getLogger(__name__)
 REALTIME_MODEL = "gpt-realtime-2025-08-28"
 
 class OpenAIRealtimeClient:
-    def __init__(self, system_prompt: str, voice: str, tools: list, tool_configs: dict):
+    def __init__(self, system_prompt: str, voice: str, tools: list, tool_configs: dict, twilio_sid: str = None, twilio_token: str = None):
         self.system_prompt = system_prompt
         self.voice = voice or "alloy"
         self.tools = tools or []
         self.tool_configs = tool_configs or {}
+        self.twilio_sid = twilio_sid
+        self.twilio_token = twilio_token
         self.ws = None
         self.transcript_log = [] # To accumulate the conversation
         self.input_tokens = 0
@@ -86,8 +88,11 @@ class OpenAIRealtimeClient:
         Also intercepts and processes function calls.
         """
         twilio_client = None
-        if settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN:
-            twilio_client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+        t_sid = self.twilio_sid or settings.TWILIO_ACCOUNT_SID
+        t_token = self.twilio_token or settings.TWILIO_AUTH_TOKEN
+        
+        if t_sid and t_token:
+            twilio_client = TwilioClient(t_sid, t_token)
 
         try:
             async for message in self.ws:

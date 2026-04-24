@@ -32,15 +32,17 @@ def _log_section(title: str, body: str = ""):
     logger.info("\n".join(lines))
 
 
-async def _get_agent(agent_id: int):
-    """Fetch VoiceAgent with tools loaded."""
+async def _get_agent_and_config(agent_id: int):
+    """Fetch VoiceAgent and its Business configuration."""
+    from models.business import BusinessConfiguration
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(VoiceAgent)
+            select(VoiceAgent, BusinessConfiguration)
+            .outerjoin(BusinessConfiguration, VoiceAgent.business_id == BusinessConfiguration.business_id)
             .options(selectinload(VoiceAgent.tools))
             .where(VoiceAgent.id == agent_id)
         )
-        return result.scalar_one_or_none()
+        return result.first()
 
 
 @router.websocket("/webcall/{agent_id}")
@@ -51,10 +53,17 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
     """
     await websocket.accept()
 
-    agent_config = await _get_agent(agent_id)
-    if not agent_config or not agent_config.active:
-        logger.warning(f"[WEB CALL] Agent {agent_id} not found or inactive — rejecting connection.")
-        await websocket.send_json({"type": "error", "message": "Agent not found or inactive."})
+    row = await _get_agent_and_config(agent_id)
+    if not row:
+        logger.warning(f"[WEB CALL] Agent {agent_id} not found — rejecting connection.")
+        await websocket.send_json({"type": "error", "message": "Agent not found."})
+        await websocket.close()
+        return
+    
+    agent_config, biz_config = row
+    if not agent_config.active:
+        logger.warning(f"[WEB CALL] Agent {agent_id} inactive — rejecting connection.")
+        await websocket.send_json({"type": "error", "message": "Agent inactive."})
         await websocket.close()
         return
 
@@ -174,7 +183,16 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
         usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
         # Spawn background task: OpenAI → Browser relay
         openai_listener_task = asyncio.create_task(
-            _relay_openai_to_browser(openai_ws, websocket, tool_configs, agent_id, transcript, usage)
+            _relay_openai_to_browser(
+                openai_ws, 
+                websocket, 
+                tool_configs, 
+                agent_id, 
+                transcript, 
+                usage,
+                twilio_sid=biz_config.twilio_sid if biz_config else None,
+                twilio_token=biz_config.twilio_auth_token if biz_config else None
+            )
         )
 
         # Browser → OpenAI relay loop
@@ -265,7 +283,16 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
                 logger.info(f"[WEB CALL] Saved transcript & summary to CallRecord {web_call_sid}")
 
 
-async def _relay_openai_to_browser(openai_ws, browser_ws, tool_configs: dict, agent_id: int, transcript: list, usage: dict):
+async def _relay_openai_to_browser(
+    openai_ws, 
+    browser_ws, 
+    tool_configs: dict, 
+    agent_id: int, 
+    transcript: list, 
+    usage: dict,
+    twilio_sid: str = None,
+    twilio_token: str = None
+):
     """Listen to OpenAI Realtime events and forward them to the browser."""
     try:
         async for raw_message in openai_ws:

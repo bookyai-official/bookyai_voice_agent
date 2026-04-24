@@ -14,26 +14,36 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
-async def get_agent_config(agent_id: int):
-    """Fetch Agent configuration directly to avoid dependency injection complexities in WS."""
+async def get_agent_and_config(agent_id: int):
+    """Fetch Agent and its Business configuration."""
+    from models.business import BusinessConfiguration
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(VoiceAgent).options(selectinload(VoiceAgent.tools)).where(VoiceAgent.id == agent_id)
+            select(VoiceAgent, BusinessConfiguration)
+            .outerjoin(BusinessConfiguration, VoiceAgent.business_id == BusinessConfiguration.business_id)
+            .options(selectinload(VoiceAgent.tools))
+            .where(VoiceAgent.id == agent_id)
         )
-        return result.scalar_one_or_none()
+        return result.first()
 
 @router.websocket("/stream/{agent_id}")
-async def twilio_media_stream(websocket: WebSocket, agent_id: int):
+async def twilio_media_stream(websocket: WebSocket, agent_id: int, lead_info: str = Query(None), direction: str = Query("inbound")):
     """
     Bidirectional stream between Twilio and OpenAI Realtime API.
     """
     await websocket.accept()
-    logger.info(f"Accepted WebSocket connection for Agent {agent_id}")
+    logger.info(f"Accepted WebSocket connection for Agent {agent_id} (Direction: {direction})")
 
-    # 1. Load Agent Config
-    agent_config = await get_agent_config(agent_id)
-    if not agent_config or not agent_config.active:
-        logger.warning("Agent not found or inactive. Closing connection.")
+    # 1. Load Agent and Config
+    row = await get_agent_and_config(agent_id)
+    if not row:
+        logger.warning("Agent not found. Closing connection.")
+        await websocket.close()
+        return
+    
+    agent_config, biz_config = row
+    if not agent_config.active:
+        logger.warning("Agent inactive. Closing connection.")
         await websocket.close()
         return
 
@@ -56,14 +66,24 @@ async def twilio_media_stream(websocket: WebSocket, agent_id: int):
         }
 
     # 3. Initialize OpenAI Client
-    # ... (rest of code)
+    final_prompt = agent_config.system_prompt
+    
+    # Lead info only for Outbound calls
+    is_outbound = "outbound" in direction.lower()
+    if is_outbound and lead_info:
+        final_prompt += f"\n\nSPECIAL INSTRUCTIONS (Lead Information):\n{lead_info}"
+        
+    # Twilio Credentials (always use business config if available)
+    t_sid = biz_config.twilio_sid if biz_config else None
+    t_token = biz_config.twilio_auth_token if biz_config else None
 
-    # 3. Initialize OpenAI Client
     openai_client = OpenAIRealtimeClient(
-        system_prompt=agent_config.system_prompt,
+        system_prompt=final_prompt,
         voice=agent_config.voice,
         tools=formatted_tools,
-        tool_configs=tool_configs
+        tool_configs=tool_configs,
+        twilio_sid=t_sid,
+        twilio_token=t_token
     )
     
     stream_sid = None
