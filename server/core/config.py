@@ -19,7 +19,22 @@ class Settings(BaseSettings):
     API_SECRET_TOKEN: str
 
     # CORS settings
-    ALLOWED_ORIGINS: list[str] = ["*"] # Default to * for dev, override in .env
+    ALLOWED_ORIGINS: list[str] = [
+        "https://booky-ai.com",
+        "https://www.booky-ai.com",
+        "https://bookyai.co.uk",
+        "https://www.bookyai.co.uk",
+        "https://staging.booky-ai.com",
+        "https://staging.bookyai.co.uk",
+        "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8000"
+    ]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

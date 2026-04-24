@@ -8,7 +8,7 @@ from core.database import engine
 from core.logging_config import setup_logging
 from api.routes import agent, call, tool, chat
 from api.websockets import stream, webcall
-from api.middleware import RequestLoggingMiddleware, global_exception_handler
+from api.middleware import RequestLoggingMiddleware, OriginRestrictionMiddleware, global_exception_handler
 
 # Import models to ensure they are registered
 import models.agent
@@ -42,6 +42,7 @@ app.add_exception_handler(Exception, global_exception_handler)
 
 # Middlewares
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(OriginRestrictionMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
