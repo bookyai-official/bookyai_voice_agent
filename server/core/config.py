@@ -26,6 +26,7 @@ class Settings(BaseSettings):
         "https://www.bookyai.co.uk",
         "https://staging.booky-ai.com",
         "https://staging.bookyai.co.uk",
+        "https://agent.booky-ai.com",
         "http://localhost",
         "http://localhost:3000",
         "http://localhost:5173",
