@@ -68,17 +68,17 @@ async def handle_incoming_call(
     if not host:
         host = "localhost:8000"
     
-    # Replace HTTP/HTTPS with WSS for WebSocket URL
-    ws_url = f"wss://{host}/ws/stream/{agent_id}?direction={direction}"
-    if lead_info:
-        from urllib.parse import quote
-        ws_url += f"&lead_info={quote(lead_info)}"
-
     form_data = await request.form()
     call_sid = form_data.get("CallSid", "unknown-sid-debug")
     from_number = form_data.get("From", "")
     to_number = form_data.get("To", "")
     direction = form_data.get("Direction", "inbound")
+    
+    # Replace HTTP/HTTPS with WSS for WebSocket URL
+    ws_url = f"wss://{host}/ws/stream/{agent_id}?direction={direction}"
+    if lead_info:
+        from urllib.parse import quote
+        ws_url += f"&lead_info={quote(lead_info)}"
     
     # inbound or outbound-api
     call_type = "outbound" if "outbound" in direction else "inbound"

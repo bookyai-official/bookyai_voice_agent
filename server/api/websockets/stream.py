@@ -1,7 +1,7 @@
 import json
 import logging
 import asyncio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from core.database import AsyncSessionLocal
