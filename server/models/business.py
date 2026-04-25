@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Decimal
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric
 from sqlalchemy.orm import relationship
 from models.base import Base
 
@@ -16,7 +16,7 @@ class BusinessConfiguration(Base):
     
     # Other fields mentioned by user (optional for FastAPI but good for parity)
     ai_model_preference = Column(String(20), default='openai')
-    staff_pay_percentage = Column(Decimal(5, 2), default=0.00)
+    staff_pay_percentage = Column(Numeric(5, 2), default=0.00)
     recurring_bookings_enabled = Column(Boolean, default=False)
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
