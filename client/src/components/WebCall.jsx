@@ -64,6 +64,7 @@ export function WebCall({ agentId }) {
   const processorRef = useRef(null);
   const micStreamRef = useRef(null);
   const nextPlayTimeRef = useRef(0);
+  const activeAudioSourcesRef = useRef([]); // Track all scheduled nodes for instant cancellation
   const transcriptEndRef = useRef(null);
 
   // Auto-scroll transcript
@@ -71,7 +72,21 @@ export function WebCall({ agentId }) {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript]);
 
+  /**
+   * Immediately stops all scheduled/playing AI audio nodes.
+   * Called on user interruption (speech_start) and on cleanup.
+   */
+  const stopPlayback = useCallback(() => {
+    activeAudioSourcesRef.current.forEach((src) => {
+      try { src.onended = null; src.stop(); src.disconnect(); } catch (_) {}
+    });
+    activeAudioSourcesRef.current = [];
+    nextPlayTimeRef.current = 0;
+    setIsAgentSpeaking(false);
+  }, []);
+
   const cleanup = useCallback(() => {
+    stopPlayback();
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -93,7 +108,7 @@ export function WebCall({ agentId }) {
       wsRef.current = null;
     }
     nextPlayTimeRef.current = 0;
-  }, []);
+  }, [stopPlayback]);
 
   useEffect(() => {
     return cleanup;
@@ -116,10 +131,22 @@ export function WebCall({ agentId }) {
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
 
+    // Track source so it can be stopped instantly on interruption
+    activeAudioSourcesRef.current.push(source);
+
     // Schedule for smooth gapless playback
     const startAt = Math.max(ctx.currentTime + 0.02, nextPlayTimeRef.current);
     source.start(startAt);
     nextPlayTimeRef.current = startAt + audioBuffer.duration;
+
+    source.onended = () => {
+      // Remove from tracking list when naturally finished
+      activeAudioSourcesRef.current = activeAudioSourcesRef.current.filter((s) => s !== source);
+      // If nothing left scheduled, mark agent as done speaking
+      if (ctx.currentTime >= nextPlayTimeRef.current - 0.1) {
+        setIsAgentSpeaking(false);
+      }
+    };
   }, []);
 
   const startCall = async () => {
@@ -188,6 +215,8 @@ export function WebCall({ agentId }) {
             break;
           case "speech_start":
             setIsSpeaking(true);
+            // User interrupted — immediately kill all queued/playing AI audio
+            stopPlayback();
             break;
           case "speech_stop":
             setIsSpeaking(false);
