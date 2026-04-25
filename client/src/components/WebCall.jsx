@@ -190,7 +190,17 @@ export function WebCall({ agentId }) {
       processor.connect(ctx.destination);
 
       // 4. Open WebSocket to backend
-      const ws = new WebSocket(`${WS_BASE_URL}/ws/webcall/${agentId}`);
+      let final_ws_url = "";
+      // get
+      if (WS_BASE_URL.includes("localhost")) {
+        final_ws_url = WS_BASE_URL.replace("http", "ws");
+      } else {
+        final_ws_url = WS_BASE_URL.replace("https", "wss");
+      }
+
+      final_ws_url = final_ws_url +`/ws/webcall/${agentId}`
+      console.log("Connecting to WebSocket:", final_ws_url);
+      const ws = new WebSocket(final_ws_url);
       wsRef.current = ws;
 
       ws.onopen = () => {
