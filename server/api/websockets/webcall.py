@@ -397,7 +397,9 @@ async def _relay_openai_to_browser(
 
             # VAD events
             elif event_type == "input_audio_buffer.speech_started":
-                logger.info(f"[WEB CALL] [Agent {agent_id}] VAD: Speech started")
+                logger.info(f"[WEB CALL] [Agent {agent_id}] VAD: Speech started — cancelling current response.")
+                # Cancel any in-progress response from OpenAI to prevent overlapping audio
+                await openai_ws.send(json.dumps({"type": "response.cancel"}))
                 await browser_ws.send_json({"type": "speech_start"})
 
             elif event_type == "input_audio_buffer.speech_stopped":
