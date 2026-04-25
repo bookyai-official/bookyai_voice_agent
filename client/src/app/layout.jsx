@@ -19,7 +19,7 @@ import { ToastProvider } from "@/lib/toast";
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className={`${montserrat.variable} font-sans antialiased min-h-screen flex bg-[#09090b]`}>
+      <body suppressHydrationWarning className={`${montserrat.variable} font-sans antialiased min-h-screen flex bg-[#09090b]`}>
         <ToastProvider>
           <ClientLayout>
             {children}

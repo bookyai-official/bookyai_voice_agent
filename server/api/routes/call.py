@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from core.database import AsyncSessionLocal, get_db
 from models.call import CallRecord
-from models.agent import VoiceAgent
+from models.agent import AIAgent
 from schemas.call import CallRecordResponse
 
 router = APIRouter(prefix="/calls", tags=["Calls"])
@@ -19,8 +19,8 @@ async def get_calls(
     agent_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
-    # Join with VoiceAgent to get the agent name
-    query = select(CallRecord, VoiceAgent.name.label("agent_name")).join(VoiceAgent, CallRecord.agent_id == VoiceAgent.id)
+    # Join with AIAgent to get the agent name
+    query = select(CallRecord, AIAgent.name.label("agent_name")).join(AIAgent, CallRecord.agent_id == AIAgent.id)
     
     if agent_id:
         query = query.where(CallRecord.agent_id == agent_id)
@@ -42,7 +42,7 @@ async def get_call_detail(
     call_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    query = select(CallRecord, VoiceAgent.name.label("agent_name")).join(VoiceAgent, CallRecord.agent_id == VoiceAgent.id).where(CallRecord.id == call_id)
+    query = select(CallRecord, AIAgent.name.label("agent_name")).join(AIAgent, CallRecord.agent_id == AIAgent.id).where(CallRecord.id == call_id)
     result = await db.execute(query)
     row = result.first()
     
@@ -124,7 +124,7 @@ async def trigger_outbound_call(request: Request, payload: OutboundCallRequest, 
     Uses per-business credentials and per-agent phone numbers.
     """
     # 1. Fetch Agent
-    result = await db.execute(select(VoiceAgent).where(VoiceAgent.id == payload.agent_id))
+    result = await db.execute(select(AIAgent).where(AIAgent.id == payload.agent_id))
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")

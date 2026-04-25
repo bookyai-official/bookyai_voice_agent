@@ -6,8 +6,8 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from core.database import get_db
 from core.config import settings
-from models.agent import VoiceAgent
-from schemas.agent import VoiceAgentCreate, VoiceAgentUpdate, VoiceAgentResponse
+from models.agent import AIAgent
+from schemas.agent import AIAgentCreate, AIAgentUpdate, AIAgentResponse
 from api.dependencies import verify_token
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
@@ -48,43 +48,43 @@ async def get_voice_preview(voice: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/", response_model=VoiceAgentResponse, dependencies=[Depends(verify_token)])
-async def create_agent(agent: VoiceAgentCreate, db: AsyncSession = Depends(get_db)):
-    db_agent = VoiceAgent(**agent.model_dump())
+@router.post("/", response_model=AIAgentResponse, dependencies=[Depends(verify_token)])
+async def create_agent(agent: AIAgentCreate, db: AsyncSession = Depends(get_db)):
+    db_agent = AIAgent(**agent.model_dump())
     db.add(db_agent)
     await db.commit()
     
     # Reload with relationships for response
     result = await db.execute(
-        select(VoiceAgent)
-        .options(selectinload(VoiceAgent.tools), selectinload(VoiceAgent.calls))
-        .where(VoiceAgent.id == db_agent.id)
+        select(AIAgent)
+        .options(selectinload(AIAgent.tools), selectinload(AIAgent.calls))
+        .where(AIAgent.id == db_agent.id)
     )
     return result.scalar_one()
 
-@router.get("/", response_model=list[VoiceAgentResponse], dependencies=[Depends(verify_token)])
+@router.get("/", response_model=list[AIAgentResponse], dependencies=[Depends(verify_token)])
 async def get_agents(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(VoiceAgent)
-        .options(selectinload(VoiceAgent.tools), selectinload(VoiceAgent.calls))
+        select(AIAgent)
+        .options(selectinload(AIAgent.tools), selectinload(AIAgent.calls))
     )
     return result.scalars().all()
 
-@router.get("/{agent_id}", response_model=VoiceAgentResponse, dependencies=[Depends(verify_token)])
+@router.get("/{agent_id}", response_model=AIAgentResponse, dependencies=[Depends(verify_token)])
 async def get_agent(agent_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(VoiceAgent)
-        .options(selectinload(VoiceAgent.tools), selectinload(VoiceAgent.calls))
-        .where(VoiceAgent.id == agent_id)
+        select(AIAgent)
+        .options(selectinload(AIAgent.tools), selectinload(AIAgent.calls))
+        .where(AIAgent.id == agent_id)
     )
     db_agent = result.scalar_one_or_none()
     if not db_agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return db_agent
 
-@router.put("/{agent_id}", response_model=VoiceAgentResponse, dependencies=[Depends(verify_token)])
-async def update_agent(agent_id: int, agent: VoiceAgentUpdate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(VoiceAgent).where(VoiceAgent.id == agent_id))
+@router.put("/{agent_id}", response_model=AIAgentResponse, dependencies=[Depends(verify_token)])
+async def update_agent(agent_id: int, agent: AIAgentUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(AIAgent).where(AIAgent.id == agent_id))
     db_agent = result.scalar_one_or_none()
     if not db_agent:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -97,15 +97,15 @@ async def update_agent(agent_id: int, agent: VoiceAgentUpdate, db: AsyncSession 
     
     # Reload with relationships
     result = await db.execute(
-        select(VoiceAgent)
-        .options(selectinload(VoiceAgent.tools), selectinload(VoiceAgent.calls))
-        .where(VoiceAgent.id == db_agent.id)
+        select(AIAgent)
+        .options(selectinload(AIAgent.tools), selectinload(AIAgent.calls))
+        .where(AIAgent.id == db_agent.id)
     )
     return result.scalar_one()
 
 @router.delete("/{agent_id}", dependencies=[Depends(verify_token)])
 async def delete_agent(agent_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(VoiceAgent).where(VoiceAgent.id == agent_id))
+    result = await db.execute(select(AIAgent).where(AIAgent.id == agent_id))
     db_agent = result.scalar_one_or_none()
     if not db_agent:
         raise HTTPException(status_code=404, detail="Agent not found")

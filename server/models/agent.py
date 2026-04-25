@@ -3,8 +3,8 @@ from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from models.base import Base
 
-class VoiceAgent(Base):
-    __tablename__ = "voice_agent_voiceagent"
+class AIAgent(Base):
+    __tablename__ = "voice_agent_aiagent"
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, nullable=True) # ForeignKey to Django Business model
     name = Column(String(100), nullable=False)
@@ -62,7 +62,7 @@ class VoiceAgent(Base):
         return "\n\n".join(parts)
 
 # Synchronization Logic: Ensure system_prompt is always up-to-date
-@event.listens_for(VoiceAgent, 'before_insert')
-@event.listens_for(VoiceAgent, 'before_update')
+@event.listens_for(AIAgent, 'before_insert')
+@event.listens_for(AIAgent, 'before_update')
 def update_system_prompt(mapper, connection, target):
     target.system_prompt = target.get_compiled_prompt()

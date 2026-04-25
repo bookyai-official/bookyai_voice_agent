@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from core.database import get_db
 from models.tool import AgentTool
-from models.agent import VoiceAgent
+from models.agent import AIAgent
 from schemas.tool import AgentToolCreate, AgentToolUpdate, AgentToolResponse
 from api.dependencies import verify_token
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/tools", tags=["Tools"])
 @router.post("/", response_model=AgentToolResponse, dependencies=[Depends(verify_token)])
 async def create_tool(tool: AgentToolCreate, db: AsyncSession = Depends(get_db)):
     # Verify Agent exists
-    res = await db.execute(select(VoiceAgent).where(VoiceAgent.id == tool.agent_id))
+    res = await db.execute(select(AIAgent).where(AIAgent.id == tool.agent_id))
     if not res.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Agent not found")
 

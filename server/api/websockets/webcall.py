@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 import uuid
 from models.call import CallRecord
 from core.database import AsyncSessionLocal
-from models.agent import VoiceAgent
+from models.agent import AIAgent
 from core.config import settings
 from services.external_tools import execute_tool
 from services.openai_summary import generate_call_summary
@@ -33,14 +33,14 @@ def _log_section(title: str, body: str = ""):
 
 
 async def _get_agent_and_config(agent_id: int):
-    """Fetch VoiceAgent and its Business configuration."""
+    """Fetch AIAgent and its Business configuration."""
     from models.business import BusinessConfiguration
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(VoiceAgent, BusinessConfiguration)
-            .outerjoin(BusinessConfiguration, VoiceAgent.business_id == BusinessConfiguration.business_id)
-            .options(selectinload(VoiceAgent.tools))
-            .where(VoiceAgent.id == agent_id)
+            select(AIAgent, BusinessConfiguration)
+            .outerjoin(BusinessConfiguration, AIAgent.business_id == BusinessConfiguration.business_id)
+            .options(selectinload(AIAgent.tools))
+            .where(AIAgent.id == agent_id)
         )
         return result.first()
 

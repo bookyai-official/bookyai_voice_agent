@@ -24,3 +24,4 @@ Thumbs.db
 
 # Database
 *.sqlite3
+server/**/*.pyc

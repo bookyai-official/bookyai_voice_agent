@@ -4,7 +4,7 @@ from datetime import datetime
 from schemas.tool import AgentToolResponse
 from schemas.call import CallRecordResponse
 
-class VoiceAgentBase(BaseModel):
+class AIAgentBase(BaseModel):
     name: str
     personality_prompt: Optional[str] = None
     pricing_prompt: Optional[str] = None
@@ -20,10 +20,10 @@ class VoiceAgentBase(BaseModel):
     phone_number: Optional[str] = None
     active: Optional[bool] = True
 
-class VoiceAgentCreate(VoiceAgentBase):
+class AIAgentCreate(AIAgentBase):
     pass
 
-class VoiceAgentUpdate(BaseModel):
+class AIAgentUpdate(BaseModel):
     name: Optional[str] = None
     personality_prompt: Optional[str] = None
     pricing_prompt: Optional[str] = None
@@ -39,7 +39,7 @@ class VoiceAgentUpdate(BaseModel):
     phone_number: Optional[str] = None
     active: Optional[bool] = None
 
-class VoiceAgentResponse(VoiceAgentBase):
+class AIAgentResponse(AIAgentBase):
     id: int
     created_at: datetime
     updated_at: datetime

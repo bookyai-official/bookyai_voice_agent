@@ -6,7 +6,7 @@ from models.base import Base
 class CallRecord(Base):
     __tablename__ = "voice_agent_callrecord"
     id = Column(Integer, primary_key=True, index=True)
-    agent_id = Column(Integer, ForeignKey("voice_agent_voiceagent.id"), nullable=False)
+    agent_id = Column(Integer, ForeignKey("voice_agent_aiagent.id"), nullable=False)
     call_sid = Column(String(100), unique=True, index=True, nullable=False)
     from_number = Column(String(50), nullable=True)
     to_number = Column(String(50), nullable=True)
@@ -23,4 +23,4 @@ class CallRecord(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    agent = relationship("VoiceAgent", back_populates="calls")
+    agent = relationship("AIAgent", back_populates="calls")

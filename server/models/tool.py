@@ -6,7 +6,7 @@ from models.base import Base
 class AgentTool(Base):
     __tablename__ = "voice_agent_agenttool"
     id = Column(Integer, primary_key=True, index=True)
-    agent_id = Column(Integer, ForeignKey("voice_agent_voiceagent.id", ondelete="CASCADE"), nullable=False)
+    agent_id = Column(Integer, ForeignKey("voice_agent_aiagent.id", ondelete="CASCADE"), nullable=False)
     
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=False)
@@ -22,4 +22,4 @@ class AgentTool(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    agent = relationship("VoiceAgent", back_populates="tools")
+    agent = relationship("AIAgent", back_populates="tools")
