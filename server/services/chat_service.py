@@ -25,8 +25,9 @@ from services.external_tools import execute_tool
 
 logger = logging.getLogger(__name__)
 
+from models.system import SystemSetting
+
 # ── Constants ─────────────────────────────────────────────────────────────────
-OPENAI_MODEL        = "gpt-5.4-mini"  # DO NOT CHANGE
 DEFAULT_TEMPERATURE = 0.8
 MAX_TOOL_ITERATIONS = 5
 OPENAI_TIMEOUT      = 30.0
@@ -226,9 +227,15 @@ async def get_agent_response(
             current_prev_resp_id = None
 
             for iteration in range(MAX_TOOL_ITERATIONS):
+                
+                # Fetch dynamic model configuration
+                async with AsyncSessionLocal() as db_session:
+                    system_setting = await db_session.execute(select(SystemSetting))
+                    system_setting = system_setting.scalar_one_or_none()
+                    current_model = system_setting.text_model if system_setting and system_setting.text_model else "gpt-4o-mini"
 
                 api_payload: dict = {
-                    "model":        OPENAI_MODEL,
+                    "model": current_model,
                     "instructions": (
                         "YOU MUST ONLY SPEAK IN ENGLISH. DO NOT USE ANY OTHER LANGUAGE. "
                         f"{agent.system_prompt}"

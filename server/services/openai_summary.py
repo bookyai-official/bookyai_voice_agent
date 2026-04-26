@@ -2,6 +2,9 @@ import json
 import logging
 import httpx
 from core.config import settings
+from core.database import AsyncSessionLocal
+from sqlalchemy.future import select
+from models.system import SystemSetting
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,12 @@ async def generate_call_summary(transcript: list) -> str:
     )
 
     try:
+        # Fetch dynamic model configuration
+        async with AsyncSessionLocal() as db_session:
+            system_setting = await db_session.execute(select(SystemSetting))
+            system_setting = system_setting.scalar_one_or_none()
+            current_model = system_setting.summary_model if system_setting and system_setting.summary_model else "gpt-4o-mini"
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.openai.com/v1/chat/completions",
@@ -40,7 +49,7 @@ async def generate_call_summary(transcript: list) -> str:
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "gpt-4o-mini", # Using a fast/cheap model for summaries
+                    "model": current_model,
                     "messages": [
                         {"role": "system", "content": "You are a helpful assistant that summarizes call transcripts."},
                         {"role": "user", "content": prompt}

@@ -40,6 +40,8 @@ export default function AgentDetail() {
   const [activeAccordion, setActiveAccordion] = useState("functions");
   const [testMode, setTestMode] = useState("voice"); // 'voice' | 'chat'
   
+  const [systemSettings, setSystemSettings] = useState(null);
+  
   const [agent, setAgent] = useState({
     name: "",
     voice: "alloy",
@@ -72,8 +74,14 @@ export default function AgentDetail() {
 
   const fetchAgent = async () => {
     try {
-      const data = await api.agents.get(params.id);
-      setAgent(data);
+      const [agentData, sysSettingsData] = await Promise.all([
+        api.agents.get(params.id),
+        api.system.getSettings().catch(() => null)
+      ]);
+      setAgent(agentData);
+      if (sysSettingsData) {
+        setSystemSettings(sysSettingsData);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -253,17 +261,17 @@ export default function AgentDetail() {
         {/* Left Side: Prompt Editor */}
         <div className="flex-1 flex flex-col border-r border-white/5 bg-[#0c0c0e]">
           <div className="p-4 border-b border-white/5 flex items-center space-x-4 bg-white/[0.02]">
-            <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5">
+            <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5" title="Realtime Model">
               <Sparkles size={14} className="text-blue-400" />
-              <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">GPT Realtime</span>
+              <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{systemSettings?.realtime_llm_model || 'GPT Realtime'}</span>
             </div>
-            <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5">
+            <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5" title="Chat Model">
+              <MessageSquare size={14} className="text-pink-400" />
+              <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{systemSettings?.text_model || 'GPT-4o-Mini'}</span>
+            </div>
+            <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5" title="Agent Voice">
               <Mic2 size={14} className="text-purple-400" />
               <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest capitalize">{agent.voice}</span>
-            </div>
-            <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5">
-              <Globe size={14} className="text-emerald-400" />
-              <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">English</span>
             </div>
           </div>
           

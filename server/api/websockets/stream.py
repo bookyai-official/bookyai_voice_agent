@@ -9,6 +9,7 @@ from models.agent import AIAgent
 from models.call import CallRecord
 from services.openai_realtime import OpenAIRealtimeClient
 from services.openai_summary import generate_call_summary
+from models.system import SystemSetting
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +78,23 @@ async def twilio_media_stream(websocket: WebSocket, agent_id: int, lead_info: st
     t_sid = biz_config.twilio_sid if biz_config else None
     t_token = biz_config.twilio_auth_token if biz_config else None
 
+    # Fetch SystemSetting
+    async with AsyncSessionLocal() as db_session:
+        system_setting = await db_session.execute(select(SystemSetting))
+        system_setting = system_setting.scalar_one_or_none()
+        current_realtime_model = system_setting.realtime_llm_model if system_setting and system_setting.realtime_llm_model else "gpt-realtime-2025-08-28"
+
     openai_client = OpenAIRealtimeClient(
         system_prompt=final_prompt,
         voice=agent_config.voice,
         tools=formatted_tools,
         tool_configs=tool_configs,
+        realtime_model=current_realtime_model,
         twilio_sid=t_sid,
-        twilio_token=t_token
+        twilio_token=t_token,
+        temperature=agent_config.temperature if agent_config.temperature is not None else 0.8,
+        vad_threshold=agent_config.vad_threshold if agent_config.vad_threshold is not None else 0.5,
+        silence_duration_ms=agent_config.silence_duration_ms if agent_config.silence_duration_ms is not None else 1000
     )
     
     stream_sid = None

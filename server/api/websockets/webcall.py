@@ -13,12 +13,11 @@ from models.agent import AIAgent
 from core.config import settings
 from services.external_tools import execute_tool
 from services.openai_summary import generate_call_summary
+from models.system import SystemSetting
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
-
-REALTIME_MODEL = "gpt-realtime-2025-08-28"
 
 # Separator for readable log blocks
 _SEP = "─" * 60
@@ -71,12 +70,18 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
     # Generate a unique SID for the web call
     web_call_sid = f"wc_{uuid.uuid4().hex[:16]}"
     
+    # Fetch SystemSetting
+    async with AsyncSessionLocal() as db_session:
+        system_setting = await db_session.execute(select(SystemSetting))
+        system_setting = system_setting.scalar_one_or_none()
+        current_realtime_model = system_setting.realtime_llm_model if system_setting and system_setting.realtime_llm_model else "gpt-realtime-2025-08-28"
+
     _log_section(
         f"WEB CALL STARTED — Agent '{agent_config.name}' (id={agent_id})",
         f"  SID       : {web_call_sid}\n"
         f"  Voice     : {agent_config.voice or 'alloy'}\n"
         f"  Tools     : {', '.join(tool_names) if tool_names else 'None'}\n"
-        f"  Model     : {REALTIME_MODEL}"
+        f"  Model     : {current_realtime_model}"
     )
 
     # Create initial CallRecord
@@ -118,12 +123,12 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
     audio_chunks_sent = 0
 
     try:
-        url = f"wss://api.openai.com/v1/realtime?model={REALTIME_MODEL}"
+        url = f"wss://api.openai.com/v1/realtime?model={current_realtime_model}"
         headers = {
             "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1"
         }
-        logger.info(f"[WEB CALL] Connecting to OpenAI Realtime (Agent {agent_id}) using model {REALTIME_MODEL}...")
+        logger.info(f"[WEB CALL] Connecting to OpenAI Realtime (Agent {agent_id}) using model {current_realtime_model}...")
         openai_ws = await websockets.connect(
             url, 
             additional_headers=headers,

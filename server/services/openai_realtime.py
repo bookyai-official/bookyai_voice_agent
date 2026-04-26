@@ -8,24 +8,25 @@ from services.external_tools import execute_tool
 
 logger = logging.getLogger(__name__)
 
-# The exact model to use for Realtime. (Could also be gpt-4o-realtime-preview-2024-10-01)
-REALTIME_MODEL = "gpt-realtime-2025-08-28"
-
 class OpenAIRealtimeClient:
-    def __init__(self, system_prompt: str, voice: str, tools: list, tool_configs: dict, twilio_sid: str = None, twilio_token: str = None):
+    def __init__(self, system_prompt: str, voice: str, tools: list, tool_configs: dict, realtime_model: str, twilio_sid: str = None, twilio_token: str = None, temperature: float = 0.8, vad_threshold: float = 0.5, silence_duration_ms: int = 1000):
         self.system_prompt = system_prompt
         self.voice = voice or "alloy"
         self.tools = tools or []
         self.tool_configs = tool_configs or {}
         self.twilio_sid = twilio_sid
         self.twilio_token = twilio_token
+        self.temperature = temperature
+        self.vad_threshold = vad_threshold
+        self.silence_duration_ms = silence_duration_ms
         self.ws = None
         self.transcript_log = [] # To accumulate the conversation
         self.input_tokens = 0
         self.output_tokens = 0
         self.total_tokens = 0
         self.cached_tokens = 0
-        self.url = f"wss://api.openai.com/v1/realtime?model={REALTIME_MODEL}"
+        self.realtime_model = realtime_model
+        self.url = f"wss://api.openai.com/v1/realtime?model={self.realtime_model}"
         self.headers = {
             "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1"
@@ -44,13 +45,14 @@ class OpenAIRealtimeClient:
                 "modalities": ["audio", "text"],
                 "instructions": f"YOU MUST ONLY SPEAK IN ENGLISH. DO NOT USE ANY OTHER LANGUAGE. {self.system_prompt}",
                 "voice": self.voice,
+                "temperature": self.temperature,
                 "input_audio_format": "g711_ulaw",  # Same as Twilio
                 "output_audio_format": "g711_ulaw", # Same as Twilio
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.8,
+                    "threshold": self.vad_threshold,
                     "prefix_padding_ms": 500,
-                    "silence_duration_ms": 1000
+                    "silence_duration_ms": self.silence_duration_ms
                 },
                 "input_audio_transcription": {
                     "model": "whisper-1"

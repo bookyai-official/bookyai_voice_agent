@@ -105,5 +105,12 @@ export const api = {
       if (!res.ok) throw new Error("Failed to send message");
       return res.json();
     }
+  },
+  system: {
+    getSettings: async () => {
+      const res = await fetch(`${API_URL}/system/settings`, { headers: getHeaders() });
+      if (!res.ok) throw new Error("Failed to fetch system settings");
+      return res.json();
+    }
   }
 };
