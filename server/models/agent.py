@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from models.base import Base
 
 class AIAgent(Base):
-    __tablename__ = "voice_agent_aiagent"
+    __tablename__ = "ai_agent_aiagent"
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, nullable=True) # ForeignKey to Django Business model
     name = Column(String(100), nullable=False)
