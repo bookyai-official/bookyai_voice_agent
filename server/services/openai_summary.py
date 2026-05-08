@@ -1,6 +1,7 @@
 import json
 import logging
 import httpx
+import datetime
 from core.config import settings
 from core.database import AsyncSessionLocal
 from sqlalchemy.future import select
@@ -51,7 +52,10 @@ async def generate_call_summary(transcript: list) -> str:
                 json={
                     "model": current_model,
                     "messages": [
-                        {"role": "system", "content": "You are a helpful assistant that summarizes call transcripts."},
+                        {
+                            "role": "system", 
+                            "content": f"Current Date and Time: {datetime.datetime.now().strftime('%A, %B %d, %Y, %I:%M %p')}. You are a helpful assistant that summarizes call transcripts."
+                        },
                         {"role": "user", "content": prompt}
                     ],
                     "max_tokens": 300,

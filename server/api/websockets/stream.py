@@ -10,6 +10,8 @@ from models.call import CallRecord
 from services.openai_realtime import OpenAIRealtimeClient
 from services.openai_summary import generate_call_summary
 from models.system import SystemSetting
+from services.usage_service import UsageService
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,22 @@ async def twilio_media_stream(websocket: WebSocket, agent_id: int, lead_info: st
         logger.warning("Agent inactive. Closing connection.")
         await websocket.close()
         return
+
+    # 1.5 Check Usage Limit
+    async with AsyncSessionLocal() as session:
+        has_usage = await UsageService.has_remaining_usage(session, agent_config.business_id, "minutes")
+        if not has_usage:
+            logger.warning(f"Business {agent_config.business_id} has exceeded call minutes limit. Closing connection.")
+            await websocket.close()
+            return
+
+    # 1.5 Check Usage Limit Early
+    async with AsyncSessionLocal() as session:
+        remaining_minutes = await UsageService.get_remaining_usage(session, agent_config.business_id, "minutes")
+        if remaining_minutes <= 0:
+            logger.warning(f"[STREAM] Business {agent_config.business_id} has 0 minutes remaining. Rejecting.")
+            await websocket.close()
+            return
 
     # 2. Extract Tools 
     formatted_tools = []
@@ -98,17 +116,45 @@ async def twilio_media_stream(websocket: WebSocket, agent_id: int, lead_info: st
     )
     
     stream_sid = None
+    
+    # 4. Duration Limit Setup (Dynamic based on remaining minutes)
+    # Cap duration at the lower of agent's limit and business's remaining minutes
+    agent_max_seconds = (agent_config.max_call_duration_minutes or 10) * 60
+    remaining_seconds = remaining_minutes * 60
+    
+    max_duration_seconds = min(agent_max_seconds, remaining_seconds)
+    connection_start_time = asyncio.get_event_loop().time()
+    
+    logger.info(f"[STREAM] Call limit set to {max_duration_seconds}s (Agent limit: {agent_max_seconds}s, Business remaining: {remaining_seconds}s)")
 
     try:
         # Connect to OpenAI
         await openai_client.connect()
         logger.info("Connected to OpenAI Realtime.")
 
+        # Handle Greeting Message / Initial Response
+        if agent_config.greeting_message:
+            logger.info(f"[STREAM] Forcing greeting message: {agent_config.greeting_message}")
+            await openai_client.send_event({
+                "type": "response.create",
+                "response": {
+                    "instructions": f"Start the conversation by saying exactly: {agent_config.greeting_message}"
+                }
+            })
+        else:
+            await openai_client.send_event({"type": "response.create"})
+
         # Create the listening task for OpenAI
         openai_listener_task = None
 
         # Listen to Twilio stream
         while True:
+            # Check duration limit
+            elapsed_time = asyncio.get_event_loop().time() - connection_start_time
+            if elapsed_time > max_duration_seconds:
+                logger.warning(f"[STREAM] Call duration limit reached ({max_duration_seconds}s). Terminating.")
+                break
+
             # If the OpenAI listener finished (e.g. agent hung up), terminate Twilio loop
             if openai_listener_task and openai_listener_task.done():
                 logger.info("[STREAM] OpenAI listener finished — terminating Twilio relay.")
@@ -159,6 +205,9 @@ async def twilio_media_stream(websocket: WebSocket, agent_id: int, lead_info: st
     except Exception as e:
         logger.error(f"WebSocket stream error: {e}")
     finally:
+        # Capture end time immediately
+        call_end_time = asyncio.get_event_loop().time()
+
         # Give a small grace period for any pending transcriptions to arrive
         await asyncio.sleep(2.0)
         
@@ -180,15 +229,26 @@ async def twilio_media_stream(websocket: WebSocket, agent_id: int, lead_info: st
                 res = await db.execute(select(CallRecord).where(CallRecord.call_sid == twilio_call_sid))
                 call_rec = res.scalar_one_or_none()
                 if call_rec:
+                    # Calculate duration
+                    duration_seconds = int(call_end_time - connection_start_time)
+                    # Round up to nearest minute for usage tracking
+                    minutes_to_charge = math.ceil(duration_seconds / 60)
+
                     # Generate Summary via OpenAI
                     summary = await generate_call_summary(transcript)
                     
                     call_rec.status = "completed"
                     call_rec.transcript = transcript
                     call_rec.call_summary = summary
+                    call_rec.duration_seconds = duration_seconds
                     call_rec.input_tokens = usage.get("input_tokens", 0)
                     call_rec.output_tokens = usage.get("output_tokens", 0)
                     call_rec.total_tokens = usage.get("total_tokens", 0)
                     call_rec.cached_tokens = usage.get("cached_tokens", 0)
                     await db.commit()
                     logger.info(f"[STREAM] Saved transcript & summary to CallRecord {twilio_call_sid}")
+
+                    # ── Update Usage ──────────────────────────────────────────
+                    if minutes_to_charge > 0:
+                        await UsageService.update_usage(db, agent_config.business_id, "minutes", minutes_to_charge)
+                        logger.info(f"[STREAM] Charged {minutes_to_charge} minutes to Business {agent_config.business_id}")

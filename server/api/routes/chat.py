@@ -18,6 +18,7 @@ from core.config import settings
 from models.agent import AIAgent
 from api.dependencies import verify_token
 from services.chat_service import build_tool_schema, _execute_tool_call, ChatServiceError
+from services.usage_service import UsageService
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 logger = logging.getLogger(__name__)
@@ -64,6 +65,11 @@ async def agent_chat_test(
     agent: AIAgent | None = db_result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    # ── 1.5 Check Usage Limit ─────────────────────────────────────────────
+    has_usage = await UsageService.has_remaining_usage(db, agent.business_id, "sms")
+    if not has_usage:
+        raise HTTPException(status_code=403, detail="Business has exceeded SMS usage limit. Test Chat is disabled.")
 
     # ── 2. Validate request ───────────────────────────────────────────────
     messages: list[dict] = payload.get("messages", [])
@@ -155,6 +161,10 @@ async def agent_chat_test(
                         for part in content_parts
                         if part.get("type") == "output_text"
                     )
+                    
+                    # ── 5. Update Usage ─────────────────────────────────────────
+                    await UsageService.update_usage(db, agent.business_id, "sms", 1)
+                    
                     return {
                         "role":        "assistant",
                         "content":     final_text,

@@ -14,6 +14,7 @@ Used by SMS, Widget, and Test Chat routes.
 import json
 import httpx
 import logging
+import datetime
 from dataclasses import dataclass
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -234,9 +235,11 @@ async def get_agent_response(
                     system_setting = system_setting.scalar_one_or_none()
                     current_model = system_setting.text_model if system_setting and system_setting.text_model else "gpt-4o-mini"
 
+                now = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
                 api_payload: dict = {
                     "model": current_model,
                     "instructions": (
+                        f"Current Date and Time: {now}. "
                         "YOU MUST ONLY SPEAK IN ENGLISH. DO NOT USE ANY OTHER LANGUAGE. "
                         f"{agent.system_prompt}"
                     ),

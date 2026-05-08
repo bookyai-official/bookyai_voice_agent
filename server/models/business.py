@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.orm import relationship
+from datetime import datetime, timezone
 from models.base import Base
 
 class BusinessConfiguration(Base):
@@ -20,3 +21,23 @@ class BusinessConfiguration(Base):
     recurring_bookings_enabled = Column(Boolean, default=False)
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
+
+class BlockedPhoneNumber(Base):
+    """
+    Model to store phone numbers that are blocked from using AI credits.
+    Each block is specific to a business.
+    """
+    __tablename__ = "business_blockedphonenumber"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, nullable=False, index=True)
+    phone_number = Column(String(20), index=True, nullable=False)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint('business_id', 'phone_number', name='_business_phone_uc'),
+    )
+
+    def __repr__(self):
+        return f"<BlockedPhoneNumber(phone_number='{self.phone_number}', business_id={self.business_id})>"

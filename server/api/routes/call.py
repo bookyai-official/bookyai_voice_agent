@@ -11,6 +11,8 @@ from core.database import AsyncSessionLocal, get_db
 from models.call import CallRecord
 from models.agent import AIAgent
 from schemas.call import CallRecordResponse
+from models.business import BusinessConfiguration, BlockedPhoneNumber
+from services.usage_service import UsageService
 
 router = APIRouter(prefix="/calls", tags=["Calls"])
 
@@ -74,6 +76,41 @@ async def handle_incoming_call(
     to_number = form_data.get("To", "")
     direction = form_data.get("Direction", "inbound")
     
+    # ── 1. Fetch Agent and Business Context ──────────────────────────────
+    async with AsyncSessionLocal() as db:
+        # We need the business_id from the agent to check for blocked numbers
+        agent_result = await db.execute(select(AIAgent).where(AIAgent.id == agent_id))
+        agent = agent_result.scalar_one_or_none()
+        
+        if not agent:
+            # If agent not found, we can't do much. Reject the call.
+            response = VoiceResponse()
+            response.reject()
+            return HTMLResponse(content=str(response), media_type="application/xml")
+
+        # ── 2. Check for Blocked Phone Number ───────────────────────────────
+        if from_number:
+            block_result = await db.execute(
+                select(BlockedPhoneNumber).where(
+                    BlockedPhoneNumber.business_id == agent.business_id,
+                    BlockedPhoneNumber.phone_number == from_number
+                )
+            )
+            if block_result.scalar_one_or_none():
+                # Number is blocked for this business
+                response = VoiceResponse()
+                response.reject() # Or response.hangup()
+                return HTMLResponse(content=str(response), media_type="application/xml")
+
+        # ── 2.5 Check Usage Limit ───────────────────────────────────────────
+        has_usage = await UsageService.has_remaining_usage(db, agent.business_id, "minutes")
+        if not has_usage:
+            # Business has no minutes left. Reject the call.
+            response = VoiceResponse()
+            response.reject()
+            return HTMLResponse(content=str(response), media_type="application/xml")
+
+    # ── 3. WebSocket URL and DB record ────────────────────────────────────
     # Replace HTTP/HTTPS with WSS for WebSocket URL
     ws_url = f"wss://{host}/ws/stream/{agent_id}?direction={direction}"
     if lead_info:
@@ -130,15 +167,29 @@ async def trigger_outbound_call(request: Request, payload: OutboundCallRequest, 
         raise HTTPException(status_code=404, detail="Agent not found")
     
     # 2. Fetch Business Config
-    from models.business import BusinessConfiguration
     result = await db.execute(select(BusinessConfiguration).where(BusinessConfiguration.business_id == agent.business_id))
     biz_config = result.scalar_one_or_none()
     twilio_sid = biz_config.twilio_sid if biz_config else None
     twilio_token = biz_config.twilio_auth_token if biz_config else None
-    from_number = agent.phone_number or biz_config.twilio_phone_number if biz_config else None
+    from_number = agent.phone_number or (biz_config.twilio_phone_number if biz_config else None)
 
     if not twilio_sid or not twilio_token or not from_number:
         raise HTTPException(status_code=400, detail="Twilio credentials or phone number missing for this agent/business.")
+
+    # 3. Check for Blocked Phone Number
+    block_result = await db.execute(
+        select(BlockedPhoneNumber).where(
+            BlockedPhoneNumber.business_id == agent.business_id,
+            BlockedPhoneNumber.phone_number == payload.to_number
+        )
+    )
+    if block_result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="The destination phone number is blocked.")
+
+    # 4. Check Usage Limit
+    has_usage = await UsageService.has_remaining_usage(db, agent.business_id, "minutes")
+    if not has_usage:
+        raise HTTPException(status_code=403, detail="Business has exceeded call minutes limit.")
 
     host = request.headers.get("host")
     try:
@@ -149,7 +200,8 @@ async def trigger_outbound_call(request: Request, payload: OutboundCallRequest, 
             host_domain=host,
             twilio_sid=twilio_sid,
             twilio_token=twilio_token,
-            lead_info=payload.lead_info
+            lead_info=payload.lead_info,
+            time_limit=(agent.max_call_duration_minutes or 10) * 60
         )
         return {"status": "success", "call_sid": call_sid}
     except Exception as e:

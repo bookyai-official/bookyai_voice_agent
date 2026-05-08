@@ -24,6 +24,7 @@ class AIAgent(Base):
     vad_threshold = Column(Float, default=0.5)
     phone_number = Column(String(20), nullable=True) # Per-agent Twilio number
     active = Column(Boolean, default=True)
+    max_call_duration_minutes = Column(Integer, default=10)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

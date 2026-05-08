@@ -17,9 +17,10 @@ from sqlalchemy.orm import selectinload
 
 from core.database import AsyncSessionLocal
 from models.agent import AIAgent
-from models.business import BusinessConfiguration
+from models.business import BusinessConfiguration, BlockedPhoneNumber
 from services.chat_service import get_or_create_chat, get_agent_response, ChatServiceError
 from api.dependencies import verify_token
+from services.usage_service import UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,18 @@ async def handle_incoming_sms(request: Request, agent_id: int):
         logger.error("[SMS] Missing Twilio credentials for Agent %d.", agent_id)
         return Response(content="<Response/>", media_type="application/xml")
 
+    # ── 2.5 Check if sender is blocked ───────────────────────────────────
+    async with AsyncSessionLocal() as session:
+        block_result = await session.execute(
+            select(BlockedPhoneNumber).where(
+                BlockedPhoneNumber.business_id == agent.business_id,
+                BlockedPhoneNumber.phone_number == from_number
+            )
+        )
+        if block_result.scalar_one_or_none():
+            logger.warning("[SMS] Blocking incoming SMS from %s (Business %d).", from_number, agent.business_id)
+            return Response(content="<Response/>", media_type="application/xml")
+
     # ── 3. Get or create Chat by phone_number ─────────────────────────────
     try:
         chat = await get_or_create_chat(
@@ -94,6 +107,13 @@ async def handle_incoming_sms(request: Request, agent_id: int):
     except ChatServiceError as e:
         logger.error("[SMS] Failed to get/create chat: %s", e)
         return Response(content="<Response/>", media_type="application/xml")
+
+    # ── 3.5 Check Usage Limit ─────────────────────────────────────────────
+    async with AsyncSessionLocal() as session:
+        has_usage = await UsageService.has_remaining_usage(session, agent.business_id, "sms")
+        if not has_usage:
+            logger.warning("[SMS] Business %d has exceeded SMS limit.", agent.business_id)
+            return Response(content="<Response/>", media_type="application/xml")
 
     # ── 4. Get AI response ────────────────────────────────────────────────
     try:
@@ -117,6 +137,11 @@ async def handle_incoming_sms(request: Request, agent_id: int):
             to=from_number,
         )
         logger.info("[SMS] Reply sent to %s (Agent %d): %s", from_number, agent_id, chat_response.content[:100])
+        
+        # ── 6. Update Usage ─────────────────────────────────────────────────
+        async with AsyncSessionLocal() as session:
+            await UsageService.update_usage(session, agent.business_id, "sms", 1)
+            
     except Exception as e:
         logger.error("[SMS] Failed to send Twilio reply: %s", e)
 
@@ -192,6 +217,23 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
             detail="Twilio credentials or phone number missing for this agent/business.",
         )
 
+    # ── 2.5 Check if recipient is blocked ─────────────────────────────────
+    async with AsyncSessionLocal() as session:
+        block_result = await session.execute(
+            select(BlockedPhoneNumber).where(
+                BlockedPhoneNumber.business_id == agent.business_id,
+                BlockedPhoneNumber.phone_number == payload.to_number
+            )
+        )
+        if block_result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="The destination phone number is blocked.")
+
+    # ── 2.7 Check Usage Limit ─────────────────────────────────────────────
+    async with AsyncSessionLocal() as session:
+        has_usage = await UsageService.has_remaining_usage(session, agent.business_id, "sms")
+        if not has_usage:
+            raise HTTPException(status_code=403, detail="Business has exceeded SMS usage limit.")
+
     # ── 3. Get or create Chat by phone_number ─────────────────────────────
     try:
         chat = await get_or_create_chat(
@@ -231,6 +273,11 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
             payload.to_number, payload.agent_id,
             twilio_message.sid, chat_response.content[:100],
         )
+
+        # ── 6. Update Usage ─────────────────────────────────────────────────
+        async with AsyncSessionLocal() as session:
+            await UsageService.update_usage(session, agent.business_id, "sms", 1)
+
         return {
             "status": "sent",
             "content": chat_response.content,

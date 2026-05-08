@@ -20,6 +20,7 @@ class CallRecord(Base):
     total_tokens = Column(Integer, default=0)
     cached_tokens = Column(Integer, default=0)
     recording_url = Column(String(255), nullable=True)
+    duration_seconds = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

@@ -2,6 +2,7 @@ import json
 import logging
 import asyncio
 import websockets
+import datetime
 from core.config import settings
 from twilio.rest import Client as TwilioClient
 from services.external_tools import execute_tool
@@ -39,11 +40,12 @@ class OpenAIRealtimeClient:
 
     async def _initialize_session(self):
         """Send the initial session configuration."""
+        now = datetime.datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
         session_update = {
             "type": "session.update",
             "session": {
                 "modalities": ["audio", "text"],
-                "instructions": f"YOU MUST ONLY SPEAK IN ENGLISH. DO NOT USE ANY OTHER LANGUAGE. {self.system_prompt}",
+                "instructions": f"Current Date and Time: {now}. YOU MUST ONLY SPEAK IN ENGLISH. DO NOT USE ANY OTHER LANGUAGE. {self.system_prompt}",
                 "voice": self.voice,
                 "temperature": self.temperature,
                 "input_audio_format": "g711_ulaw",  # Same as Twilio
@@ -61,9 +63,7 @@ class OpenAIRealtimeClient:
             }
         }
         await self.send_event(session_update)
-        # Make the agent speak first
-        await self.send_event({"type": "response.create"})
-        logger.info("[OPENAI] Session initialized and response requested.")
+        logger.info("[OPENAI] Session initialized.")
 
     async def send_event(self, event: dict):
         """Send a JSON payload to OpenAI."""

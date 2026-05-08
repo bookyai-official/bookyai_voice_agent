@@ -14,6 +14,8 @@ from core.config import settings
 from services.external_tools import execute_tool
 from services.openai_summary import generate_call_summary
 from models.system import SystemSetting
+from services.usage_service import UsageService
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,18 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
         await websocket.send_json({"type": "error", "message": "Agent inactive."})
         await websocket.close()
         return
+
+    # 1.5 Check Usage Limit Early
+    async with AsyncSessionLocal() as session:
+        remaining_minutes = await UsageService.get_remaining_usage(session, agent_config.business_id, "minutes")
+        if remaining_minutes <= 0:
+            logger.warning(f"[WEB CALL] Business {agent_config.business_id} has 0 minutes remaining. Rejecting.")
+            await websocket.send_json({
+                "type": "error", 
+                "message": "You have reached your call minutes limit. Please top up to continue."
+            })
+            await websocket.close()
+            return
 
     tool_names = [t.name for t in agent_config.tools]
     # Generate a unique SID for the web call
@@ -119,6 +133,17 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
 
     openai_ws = None
     openai_listener_task = None
+    
+    # 4. Duration Limit Setup (Dynamic based on remaining minutes)
+    # Cap duration at the lower of agent's limit and business's remaining minutes
+    agent_max_seconds = (agent_config.max_call_duration_minutes or 10) * 60
+    remaining_seconds = remaining_minutes * 60
+    
+    max_duration_seconds = min(agent_max_seconds, remaining_seconds)
+    connection_start_time = asyncio.get_event_loop().time()
+    
+    logger.info(f"[WEB CALL] Call limit set to {max_duration_seconds}s (Agent limit: {agent_max_seconds}s, Business remaining: {remaining_seconds}s)")
+    
     session_start = time.monotonic()
     audio_chunks_sent = 0
 
@@ -161,25 +186,17 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
         await openai_ws.send(json.dumps(session_update))
         logger.info(f"[WEB CALL] Session configured (temp={agent_config.temperature}, vad={agent_config.vad_threshold}, silence={agent_config.silence_duration_ms}ms)")
 
-        # Handle Greeting Message if provided
+        # Handle Greeting Message / Initial Response
         if agent_config.greeting_message:
-            logger.info(f"[WEB CALL] Sending greeting message: {agent_config.greeting_message}")
+            logger.info(f"[WEB CALL] Forcing greeting message: {agent_config.greeting_message}")
             await openai_ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": agent_config.greeting_message
-                        }
-                    ]
+                "type": "response.create",
+                "response": {
+                    "instructions": f"Start the conversation by saying exactly: {agent_config.greeting_message}"
                 }
             }))
-
-        # Make the agent speak first
-        await openai_ws.send(json.dumps({"type": "response.create"}))
+        else:
+            await openai_ws.send(json.dumps({"type": "response.create"}))
         logger.info(f"[WEB CALL] Initial response.create sent.")
 
         await websocket.send_json({"type": "status", "status": "connected"})
@@ -205,6 +222,11 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
             nonlocal audio_chunks_sent
             try:
                 while True:
+                    # Check duration limit
+                    if (asyncio.get_event_loop().time() - connection_start_time) > max_duration_seconds:
+                        logger.info(f"[WEB CALL] Duration limit reached for {web_call_sid}. Closing.")
+                        break
+                    
                     message = await websocket.receive_text()
                     data = json.loads(message)
                     msg_type = data.get("type")
@@ -244,6 +266,9 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
             # If browser stopped first, wait a bit for any pending OpenAI events (like final transcription)
             await asyncio.sleep(2.0)
 
+        # Capture the exact end time before grace periods
+        call_end_time = asyncio.get_event_loop().time()
+
         # Cleanup pending task
         for task in pending:
             task.cancel()
@@ -274,18 +299,29 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
             result = await db.execute(select(CallRecord).where(CallRecord.call_sid == web_call_sid))
             call_rec = result.scalar_one_or_none()
             if call_rec:
+                # Calculate duration based on the captured end time
+                duration_seconds = int(call_end_time - connection_start_time)
+                # Round up to nearest minute for usage tracking
+                minutes_to_charge = math.ceil(duration_seconds / 60)
+
                 # Generate Summary via OpenAI
                 summary = await generate_call_summary(transcript)
                 
                 call_rec.status = "completed"
                 call_rec.transcript = transcript
                 call_rec.call_summary = summary
+                call_rec.duration_seconds = duration_seconds
                 call_rec.input_tokens = usage.get("input_tokens", 0)
                 call_rec.output_tokens = usage.get("output_tokens", 0)
                 call_rec.total_tokens = usage.get("total_tokens", 0)
                 call_rec.cached_tokens = usage.get("cached_tokens", 0)
                 await db.commit()
                 logger.info(f"[WEB CALL] Saved transcript & summary to CallRecord {web_call_sid}")
+
+                # ── Update Usage ──────────────────────────────────────────
+                if minutes_to_charge > 0:
+                    await UsageService.update_usage(db, agent_config.business_id, "minutes", minutes_to_charge)
+                    logger.info(f"[WEB CALL] Charged {minutes_to_charge} minutes to Business {agent_config.business_id}")
 
 
 async def _relay_openai_to_browser(
