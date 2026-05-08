@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from core.database import AsyncSessionLocal
 from models.agent import AIAgent
 from models.business import BusinessConfiguration, BlockedPhoneNumber
-from services.chat_service import get_or_create_chat, get_agent_response, ChatServiceError
+from services.chat_service import get_or_create_chat, get_agent_response, save_message, ChatServiceError
 from api.dependencies import verify_token
 from services.usage_service import UsageService
 
@@ -42,8 +42,8 @@ async def handle_incoming_sms(request: Request, agent_id: int):
     message_sid = form_data.get("MessageSid", "unknown")
 
     logger.info(
-        "[SMS] Incoming from %s to %s (Agent %d): %s",
-        from_number, to_number, agent_id, body[:100],
+        "[SMS] Incoming from %s to %s (Agent %s): %s",
+        from_number, to_number, str(agent_id), body[:100],
     )
 
     if not body:
@@ -64,17 +64,17 @@ async def handle_incoming_sms(request: Request, agent_id: int):
         row = result.first()
 
     if not row:
-        logger.error("[SMS] Agent %d not found.", agent_id)
+        logger.error("[SMS] Agent %s not found.", str(agent_id))
         return Response(content="<Response/>", media_type="application/xml")
 
     agent, biz_config = row
 
     if not agent.active:
-        logger.warning("[SMS] Agent %d is inactive.", agent_id)
+        logger.warning("[SMS] Agent %s is inactive.", str(agent_id))
         return Response(content="<Response/>", media_type="application/xml")
 
     if not agent.business_id:
-        logger.error("[SMS] Agent %d has no business_id.", agent_id)
+        logger.error("[SMS] Agent %s has no business_id.", str(agent_id))
         return Response(content="<Response/>", media_type="application/xml")
 
     # ── 2. Check Twilio credentials ───────────────────────────────────────
@@ -83,7 +83,7 @@ async def handle_incoming_sms(request: Request, agent_id: int):
     reply_from   = agent.phone_number or (biz_config.twilio_phone_number if biz_config else None)
 
     if not twilio_sid or not twilio_token or not reply_from:
-        logger.error("[SMS] Missing Twilio credentials for Agent %d.", agent_id)
+        logger.error("[SMS] Missing Twilio credentials for Agent %s.", str(agent_id))
         return Response(content="<Response/>", media_type="application/xml")
 
     # ── 2.5 Check if sender is blocked ───────────────────────────────────
@@ -108,11 +108,25 @@ async def handle_incoming_sms(request: Request, agent_id: int):
         logger.error("[SMS] Failed to get/create chat: %s", e)
         return Response(content="<Response/>", media_type="application/xml")
 
-    # ── 3.5 Check Usage Limit ─────────────────────────────────────────────
+    # 3.7 Check if AI is enabled for this chat ────────────────────────────
+    if not chat.enable_ai:
+        logger.info("[SMS] AI is disabled for Chat %d. Saving message and skipping response.", chat.id)
+        await save_message(chat.id, "user", body)
+        return Response(content="<Response/>", media_type="application/xml")
+
+    # 3.5 Check Usage Limit ─────────────────────────────────────────────
     async with AsyncSessionLocal() as session:
         has_usage = await UsageService.has_remaining_usage(session, agent.business_id, "sms")
         if not has_usage:
-            logger.warning("[SMS] Business %d has exceeded SMS limit.", agent.business_id)
+            logger.warning("[SMS] Business %s has exceeded SMS limit.", str(agent.business_id))
+            # Save the message anyway
+            await save_message(chat.id, "user", body)
+            # Add a system error message for the owner
+            await save_message(
+                chat.id, 
+                "error", 
+                "AI response skipped: Your business has exceeded its SMS usage limit. Please top up your credits to enable automatic AI responses."
+            )
             return Response(content="<Response/>", media_type="application/xml")
 
     # ── 4. Get AI response ────────────────────────────────────────────────
@@ -124,7 +138,7 @@ async def handle_incoming_sms(request: Request, agent_id: int):
             channel="sms",
         )
     except ChatServiceError as e:
-        logger.error("[SMS] ChatService error for Agent %d: %s", agent_id, e)
+        logger.error("[SMS] ChatService error for Agent %s: %s", str(agent_id), e)
         return Response(content="<Response/>", media_type="application/xml")
 
     # ── 5. Send reply via Twilio REST API ─────────────────────────────────
@@ -136,7 +150,7 @@ async def handle_incoming_sms(request: Request, agent_id: int):
             from_=reply_from,
             to=from_number,
         )
-        logger.info("[SMS] Reply sent to %s (Agent %d): %s", from_number, agent_id, chat_response.content[:100])
+        logger.info("[SMS] Reply sent to %s (Agent %s): %s", from_number, str(agent_id), chat_response.content[:100])
         
         # ── 6. Update Usage ─────────────────────────────────────────────────
         async with AsyncSessionLocal() as session:
@@ -256,7 +270,7 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
             channel="sms_outbound",
         )
     except ChatServiceError as e:
-        logger.error("[SMS OUTBOUND] ChatService error for Agent %d: %s", payload.agent_id, e)
+        logger.error("[SMS OUTBOUND] ChatService error for Agent %s: %s", str(payload.agent_id), e)
         raise HTTPException(status_code=502, detail=str(e))
 
     # ── 5. Send via Twilio ────────────────────────────────────────────────
@@ -269,8 +283,8 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
             to=payload.to_number,
         )
         logger.info(
-            "[SMS OUTBOUND] Sent to %s (Agent %d, SID %s): %s",
-            payload.to_number, payload.agent_id,
+            "[SMS OUTBOUND] Sent to %s (Agent %s, SID %s): %s",
+            payload.to_number, str(payload.agent_id),
             twilio_message.sid, chat_response.content[:100],
         )
 

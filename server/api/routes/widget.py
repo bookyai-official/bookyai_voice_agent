@@ -14,7 +14,8 @@ from sqlalchemy.orm import selectinload
 
 from core.database import AsyncSessionLocal
 from models.agent import AIAgent
-from services.chat_service import get_or_create_chat, get_agent_response, ChatServiceError
+from services.chat_service import get_or_create_chat, get_agent_response, save_message, ChatServiceError
+from services.usage_service import UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,33 @@ async def widget_chat(agent_id: int, payload: WidgetMessageRequest):
     except ChatServiceError as e:
         logger.error("[WIDGET] Failed to get/create chat: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+    # ── 2.5 Check if AI is enabled for this chat ──────────────────────────
+    if not chat.enable_ai:
+        logger.info("[WIDGET] AI is disabled for Chat %d. Saving message and skipping response.", chat.id)
+        await save_message(chat.id, "user", payload.message.strip())
+        return WidgetMessageResponse(
+            content="AI response is currently disabled for this conversation.",
+            chat_id=chat.id,
+            session_key=payload.session_key,
+        )
+
+    # ── 2.7 Check Usage Limit ─────────────────────────────────────────────
+    async with AsyncSessionLocal() as db_session:
+        has_usage = await UsageService.has_remaining_usage(db_session, agent.business_id, "sms")
+        if not has_usage:
+            logger.warning("[WIDGET] Business %s has exceeded SMS limit.", str(agent.business_id))
+            await save_message(chat.id, "user", payload.message.strip())
+            await save_message(
+                chat.id,
+                "error",
+                "AI response skipped: Business has exceeded its usage limit."
+            )
+            return WidgetMessageResponse(
+                content="AI assistance is currently unavailable due to usage limits.",
+                chat_id=chat.id,
+                session_key=payload.session_key,
+            )
 
     # ── 3. Get AI response ────────────────────────────────────────────────
     try:

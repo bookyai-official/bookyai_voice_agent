@@ -171,7 +171,7 @@ async def _load_conversation_history(chat_id: int) -> list[dict]:
     ]
 
 
-async def _save_message(chat_id: int, role: str, content: str) -> Message:
+async def save_message(chat_id: int, role: str, content: str) -> Message:
     """Save a message to the DB."""
     async with AsyncSessionLocal() as db:
         msg = Message(chat_id=chat_id, role=role, content=content)
@@ -211,7 +211,7 @@ async def get_agent_response(
     tag = f"[CHAT SERVICE][{channel.upper()}]"
 
     # 1. Save user message
-    await _save_message(chat_id, "user", user_message)
+    await save_message(chat_id, "user", user_message)
 
     # 2. Load full conversation history
     history = await _load_conversation_history(chat_id)
@@ -299,6 +299,15 @@ async def get_agent_response(
                             tag, fc.get("name"), iteration + 1, MAX_TOOL_ITERATIONS,
                         )
 
+                        # Save tool call to history for dashboard visibility
+                        tool_name = fc.get("name", "unknown")
+                        tool_args = fc.get("arguments", "{}")
+                        await save_message(
+                            chat_id, 
+                            "tool_call", 
+                            f"Tool Call: {tool_name}\nArgs: {tool_args}\nOutput: {result_str}"
+                        )
+
                     # Next iteration: send tool results, linked to current response
                     current_input        = tool_result_items
                     current_prev_resp_id = response_id
@@ -314,7 +323,7 @@ async def get_agent_response(
                     )
 
                     # 5. Save assistant response to DB
-                    await _save_message(chat_id, "assistant", final_text)
+                    await save_message(chat_id, "assistant", final_text)
 
                     logger.info("%s Response: %s", tag, final_text[:200])
                     return ChatResponse(

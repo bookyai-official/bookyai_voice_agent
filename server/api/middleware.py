@@ -49,6 +49,7 @@ class OriginRestrictionMiddleware(BaseHTTPMiddleware):
             "staging.booky-ai.com",
             "staging.bookyai.co.uk",
             "localhost",
+            "efea-2402-e000-617-b6b3-d0ac-9d10-ad3a-962b.ngrok-free.app",
             "127.0.0.1"
         ]
         
