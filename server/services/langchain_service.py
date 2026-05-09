@@ -64,8 +64,8 @@ async def get_chat_response(
     if hasattr(agent, "hydrate_history"):
         await agent.hydrate_history(thread_id, history)
     
-    # 5. Execute Agent (LangChain)
-    response = await agent.ask(user_message, thread_id, additional_context)
+    # 5. Execute Agent (LangChain) with DB History
+    response = await agent.ask(user_message, thread_id, additional_context, history=history)
     
     # 6. Save assistant response to DB
     await save_message(chat_id, "assistant", response)

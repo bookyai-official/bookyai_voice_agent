@@ -49,11 +49,16 @@ class OpenAIRealtimeClient:
         """Send the initial session configuration using VoiceAgent definitions."""
         audio_format = "g711_ulaw" if self.channel == "twilio" else "pcm16"
         
+        instructions = self.agent.get_system_instructions()
+        tool_schemas = self.agent.get_tool_schemas()
+
+     
+
         session_update = {
             "type": "session.update",
             "session": {
                 "modalities": ["audio", "text"],
-                "instructions": self.agent.get_system_instructions(),
+                "instructions": instructions,
                 "voice": getattr(self.agent, 'voice', 'alloy'),
                 "temperature": getattr(self.agent, 'temperature', 0.8),
                 "input_audio_format": audio_format,
@@ -67,15 +72,11 @@ class OpenAIRealtimeClient:
                 "input_audio_transcription": {
                     "model": "whisper-1"
                 },
-                "tools": self.agent.get_tool_schemas()
+                "tools": tool_schemas
             }
         }
         await self.send_event(session_update)
-        # Log instructions summary for verification
-        instructions = session_update['session']['instructions']
-        instr_summary = (instructions[:100] + '...') if len(instructions) > 100 else instructions
         logger.info(f"[OPENAI] Session initialized (Channel: {self.channel}, Format: {audio_format}, Voice: {session_update['session']['voice']})")
-        logger.info(f"[OPENAI] Instructions: {instr_summary}")
 
     async def send_event(self, event: dict):
         """Send a JSON payload to OpenAI."""
@@ -193,6 +194,7 @@ class OpenAIRealtimeClient:
                     transcript = event.get('transcript')
                     if transcript:
                         self.transcript_log.append({"role": "assistant", "text": transcript})
+                        print(f"DEBUG: [VOICE] AGENT: {transcript}")
                         logger.info(f"Agent: {transcript}")
                         if self.channel == "browser":
                             await client_ws.send_json({"type": "transcript", "role": "assistant", "text": transcript})
@@ -201,6 +203,7 @@ class OpenAIRealtimeClient:
                     user_text = event.get('transcript', '').strip()
                     if user_text:
                         self.transcript_log.append({"role": "user", "text": user_text})
+                        print(f"DEBUG: [VOICE] USER: {user_text}")
                         logger.info(f"User: {user_text}")
                         if self.channel == "browser":
                             await client_ws.send_json({"type": "transcript", "role": "user", "text": user_text})

@@ -2,8 +2,8 @@ import logging
 import datetime
 from typing import List, Dict
 from sqlalchemy.future import select
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from agents.llm_utils import get_llm
 
 from core.config import settings
 from core.database import AsyncSessionLocal
@@ -35,12 +35,15 @@ async def generate_call_summary(transcript: List[Dict[str, str]]) -> str:
         system_setting = system_setting.scalar_one_or_none()
         current_model = system_setting.summary_model if system_setting and system_setting.summary_model else "gpt-4o-mini"
 
-    # 3. Initialize LangChain Chat Model
-    chat_model = ChatOpenAI(
-        model=current_model,
+    # 3. Initialize LLM via utility (supports multiple providers)
+    chat_model = get_llm(
+        model_name=current_model,
+        temperature=0.5,
         openai_api_key=settings.OPENAI_API_KEY,
-        max_tokens=300,
-        temperature=0.5
+        gemini_api_key=system_setting.gemini_api_key if system_setting else None,
+        grok_api_key=system_setting.grok_api_key if system_setting else None,
+        deepseek_api_key=system_setting.deepseek_api_key if system_setting else None,
+        max_tokens=300
     )
 
     system_content = f"Current Date and Time: {datetime.datetime.now().strftime('%A, %B %d, %Y, %I:%M %p')}. You are a helpful assistant that summarizes call transcripts."

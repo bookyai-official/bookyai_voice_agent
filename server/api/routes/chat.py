@@ -53,37 +53,24 @@ async def agent_chat_test(
     if not messages:
         raise HTTPException(status_code=400, detail="No messages provided")
 
-    # ── 3. Initialize Agent (Stateless) ───────────────────────────────────
-    try:
-        tools = get_tools(agent_cfg)
-        test_agent = BaseAgent(
-            model_name="gpt-4o-mini",
-            openai_api_key=settings.OPENAI_API_KEY,
-            system_prompt=agent_cfg.system_prompt,
-            tools=tools,
-            temperature=agent_cfg.temperature or 0.7
-        )
-        
-        # Hydrate the checkpointer with provided history
-        thread_id = str(uuid.uuid4())
-        config = {"configurable": {"thread_id": thread_id}}
-        
-        lc_messages = []
-        history = messages[:-1]
-        for msg in history:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role == "user":
-                lc_messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                lc_messages.append(AIMessage(content=content))
-        
-        if lc_messages:
-            await test_agent.checkpointer.aupdate_state(config, {"messages": lc_messages})
+    # ── 3. Get or Create Chat Session ─────────────────────────────────────
+    # We use a stable session_key for testing this agent to persist history
+    session_key = payload.get("session_key", f"test_widget_{agent_id}")
+    from services.chat_service import get_or_create_chat
+    chat = await get_or_create_chat(
+        business_id=agent_cfg.business_id,
+        session_key=session_key
+    )
 
-        # ── 4. Run Agent ──────────────────────────────────────────────────────
+    # ── 4. Get AI Response via Unified Service ────────────────────────────
+    try:
         current_input = messages[-1].get("content")
-        response_text = await test_agent.run(current_input, thread_id)
+        from services.langchain_service import get_chat_response
+        response_text = await get_chat_response(
+            agent_id=agent_id,
+            chat_id=chat.id,
+            user_message=current_input
+        )
         
         # ── 5. Update Usage ─────────────────────────────────────────────────
         await UsageService.update_usage(db, agent_cfg.business_id, "sms", 1)
@@ -92,7 +79,8 @@ async def agent_chat_test(
             "role":        "assistant",
             "content":     response_text,
             "response_id": "langchain_resp",
-            "usage":       {}
+            "chat_id":     chat.id,
+            "session_key": session_key
         }
 
     except Exception as exc:

@@ -9,6 +9,11 @@ class SystemSetting(Base):
     realtime_llm_model = Column(String(100), default='gpt-realtime-2025-08-28')
     summary_model = Column(String(100), default='gpt-4o-mini')
     
+    openai_api_key = Column(String(255), nullable=True)
+    gemini_api_key = Column(String(255), nullable=True)
+    grok_api_key = Column(String(255), nullable=True)
+    deepseek_api_key = Column(String(255), nullable=True)
+    
     maintenance_mode = Column(Boolean, default=False)
     maintenance_message = Column(Text, nullable=True)
     

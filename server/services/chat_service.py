@@ -55,7 +55,7 @@ async def get_or_create_chat(
         await db.commit()
         await db.refresh(chat)
         logger.info(
-            "[CHAT SERVICE] Created new Chat id=%d (business=%d, %s)",
+            "[CHAT SERVICE] Created new Chat id=%d (business=%s, %s)",
             chat.id, business_id,
             f"phone={phone_number}" if phone_number else f"session={session_key}",
         )
