@@ -18,9 +18,10 @@ from sqlalchemy.orm import selectinload
 from core.database import AsyncSessionLocal
 from models.agent import AIAgent
 from models.business import BusinessConfiguration, BlockedPhoneNumber
-from services.chat_service import get_or_create_chat, get_agent_response, save_message, ChatServiceError
+from services.chat_service import get_or_create_chat, save_message, ChatServiceError
 from api.dependencies import verify_token
 from services.usage_service import UsageService
+from services.langchain_service import get_sms_response
 
 logger = logging.getLogger(__name__)
 
@@ -131,14 +132,13 @@ async def handle_incoming_sms(request: Request, agent_id: int):
 
     # ── 4. Get AI response ────────────────────────────────────────────────
     try:
-        chat_response = await get_agent_response(
-            agent=agent,
-            user_message=body,
+        response_text = await get_sms_response(
+            agent_id=agent.id,
             chat_id=chat.id,
-            channel="sms",
+            user_message=body
         )
-    except ChatServiceError as e:
-        logger.error("[SMS] ChatService error for Agent %s: %s", str(agent_id), e)
+    except Exception as e:
+        logger.error("[SMS] LangChain error for Agent %s: %s", str(agent_id), e)
         return Response(content="<Response/>", media_type="application/xml")
 
     # ── 5. Send reply via Twilio REST API ─────────────────────────────────
@@ -146,11 +146,11 @@ async def handle_incoming_sms(request: Request, agent_id: int):
         from twilio.rest import Client
         client = Client(twilio_sid, twilio_token)
         client.messages.create(
-            body=chat_response.content,
+            body=response_text,
             from_=reply_from,
             to=from_number,
         )
-        logger.info("[SMS] Reply sent to %s (Agent %s): %s", from_number, str(agent_id), chat_response.content[:100])
+        logger.info("[SMS] Reply sent to %s (Agent %s): %s", from_number, str(agent_id), response_text[:100])
         
         # ── 6. Update Usage ─────────────────────────────────────────────────
         async with AsyncSessionLocal() as session:
@@ -263,14 +263,13 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
         user_prompt += f"\n\nLead Information:\n{payload.lead_info}"
 
     try:
-        chat_response = await get_agent_response(
-            agent=agent,
-            user_message=user_prompt,
+        response_text = await get_sms_response(
+            agent_id=agent.id,
             chat_id=chat.id,
-            channel="sms_outbound",
+            user_message=user_prompt
         )
-    except ChatServiceError as e:
-        logger.error("[SMS OUTBOUND] ChatService error for Agent %s: %s", str(payload.agent_id), e)
+    except Exception as e:
+        logger.error("[SMS OUTBOUND] LangChain error for Agent %s: %s", str(payload.agent_id), e)
         raise HTTPException(status_code=502, detail=str(e))
 
     # ── 5. Send via Twilio ────────────────────────────────────────────────
@@ -278,14 +277,14 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
         from twilio.rest import Client
         client = Client(twilio_sid, twilio_token)
         twilio_message = client.messages.create(
-            body=chat_response.content,
+            body=response_text,
             from_=from_number,
             to=payload.to_number,
         )
         logger.info(
             "[SMS OUTBOUND] Sent to %s (Agent %s, SID %s): %s",
             payload.to_number, str(payload.agent_id),
-            twilio_message.sid, chat_response.content[:100],
+            twilio_message.sid, response_text[:100],
         )
 
         # ── 6. Update Usage ─────────────────────────────────────────────────
@@ -294,9 +293,9 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
 
         return {
             "status": "sent",
-            "content": chat_response.content,
+            "content": response_text,
             "message_sid": twilio_message.sid,
-            "chat_id": chat_response.chat_id,
+            "chat_id": chat.id,
         }
     except Exception as e:
         logger.error("[SMS OUTBOUND] Failed to send via Twilio: %s", e)

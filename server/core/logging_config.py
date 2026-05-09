@@ -1,6 +1,5 @@
 import logging
 import sys
-from pythonjsonlogger import jsonlogger
 from core.config import settings
 
 def setup_logging():
@@ -12,12 +11,11 @@ def setup_logging():
         
     handler = logging.StreamHandler(sys.stdout)
     
-    # Use JSON formatter for production-like environments
-    # For local dev, you might want to keep it human-readable, 
-    # but here we'll follow the production-ready requirement.
-    formatter = jsonlogger.JsonFormatter(
-        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
-        json_ensure_ascii=False
+    # Standard human-readable format
+    # Format: [2023-10-27 12:00:00] [INFO] [logger.name] Message
+    formatter = logging.Formatter(
+        fmt="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
     )
     
     handler.setFormatter(formatter)
@@ -27,5 +25,6 @@ def setup_logging():
     # Reduce noise from some libraries
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
 
     return logger
