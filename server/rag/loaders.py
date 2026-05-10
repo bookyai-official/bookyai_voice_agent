@@ -114,10 +114,30 @@ class DocumentLoader:
 
     @staticmethod
     def _load_url(source_path: str) -> List[Document]:
-        from langchain_community.document_loaders import WebBaseLoader
+        import requests
+        from bs4 import BeautifulSoup
+        from langchain_core.documents import Document
+        
+        try:
+            response = requests.get(source_path, timeout=15)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise DocumentLoaderError(f"Failed to fetch URL {source_path}: {e}")
 
-        loader = WebBaseLoader(source_path)
-        return loader.load()
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Remove noisy elements
+        for element in soup(["script", "style", "header", "footer", "nav", "noscript", "aside"]):
+            element.decompose()
+            
+        text = soup.get_text(separator="\n", strip=True)
+        
+        # Clean up excessive newlines
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        clean_text = "\n".join(chunk for chunk in chunks if chunk)
+        
+        return [Document(page_content=clean_text, metadata={"source": source_path})]
 
 
 # Register loaders on class — done once at import time

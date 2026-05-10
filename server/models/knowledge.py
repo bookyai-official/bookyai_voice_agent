@@ -26,7 +26,6 @@ class KnowledgeBase(Base):
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(
         Integer,
-        ForeignKey("business_business.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
