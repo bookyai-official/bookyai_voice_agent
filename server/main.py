@@ -6,7 +6,7 @@ import logging
 from core.config import settings
 from core.database import engine
 from core.logging_config import setup_logging
-from api.routes import agent, call, tool, chat, sms, widget, system
+from api.routes import agent, call, tool, chat, sms, widget, system, knowledge
 from api.websockets import stream, webcall
 from api.middleware import RequestLoggingMiddleware, OriginRestrictionMiddleware, global_exception_handler
 
@@ -15,6 +15,7 @@ import models.agent
 import models.call
 import models.tool
 import models.conversation
+import models.knowledge
 
 # Setup structured logging
 setup_logging()
@@ -60,6 +61,7 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(sms.router, prefix="/api")      # Twilio SMS channel
 app.include_router(widget.router, prefix="/api")    # Web chat widget channel
 app.include_router(system.router, prefix="/api")    # System settings
+app.include_router(knowledge.router, prefix="/api")  # RAG knowledge bases
 app.include_router(stream.router)   # Twilio WS router
 app.include_router(webcall.router)  # Browser WS router
 

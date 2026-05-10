@@ -13,15 +13,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         process_time = time.time() - start_time
         
+        client_ip = request.client.host if request.client else "unknown"
         logger.info(
-            "Request processed",
-            extra={
-                "method": request.method,
-                "url": str(request.url),
-                "status_code": response.status_code,
-                "process_time_ms": round(process_time * 1000, 2),
-                "client_host": request.client.host if request.client else None
-            }
+            f"{client_ip} - {request.method} {request.url.path} - HTTP {response.status_code} "
+            f"({round(process_time * 1000, 2)}ms)"
         )
         return response
 

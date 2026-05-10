@@ -14,6 +14,10 @@ class Settings(BaseSettings):
 
     # OpenAI Settings
     OPENAI_API_KEY: Optional[str] = None
+
+    # Pinecone (RAG vector store)
+    PINECONE_API_KEY: Optional[str] = None
+    PINECONE_INDEX_NAME: str = "booky-rag"
     
     # Internal auth simple token (for basic CRUD protection)
     API_SECRET_TOKEN: str

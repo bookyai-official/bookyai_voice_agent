@@ -13,6 +13,10 @@ class SystemSetting(Base):
     gemini_api_key = Column(String(255), nullable=True)
     grok_api_key = Column(String(255), nullable=True)
     deepseek_api_key = Column(String(255), nullable=True)
+
+    # RAG embedding configuration
+    embedding_provider = Column(String(20), default='openai')    # "openai" or "gemini"
+    embedding_model = Column(String(100), nullable=True)         # e.g. "text-embedding-3-large"
     
     maintenance_mode = Column(Boolean, default=False)
     maintenance_message = Column(Text, nullable=True)
