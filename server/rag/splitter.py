@@ -11,7 +11,7 @@ Usage:
 
     chunks = ChunkSplitter.split(
         documents=raw_docs,
-        business_id=42,
+        business_id="42",
         knowledge_base_id=7,
         document_id=123,
         source_name="policy.pdf",
@@ -43,7 +43,7 @@ class ChunkSplitter:
     def split(
         cls,
         documents: List[Document],
-        business_id: int,
+        business_id: int | str,
         knowledge_base_id: int,
         document_id: int,
         source_name: str,
@@ -94,7 +94,7 @@ class ChunkSplitter:
             chunk.metadata.update({
                 "source": source_name,
                 "source_type": source_type,
-                "business_id": business_id,
+                "business_id": str(business_id),
                 "knowledge_base_id": knowledge_base_id,
                 "document_id": document_id,
                 "chunk_index": index,
@@ -103,7 +103,7 @@ class ChunkSplitter:
 
         logger.info(
             "Split %d document(s) into %d chunks "
-            "(business_id=%d, document_id=%d, chunk_size=%d, overlap=%d)",
+            "(business_id=%s, document_id=%d, chunk_size=%d, overlap=%d)",
             len(documents), len(enriched_chunks),
             business_id, document_id, chunk_size, chunk_overlap,
         )

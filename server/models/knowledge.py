@@ -25,7 +25,7 @@ class KnowledgeBase(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(
-        Integer,
+        String(100),
         nullable=False,
         index=True,
     )

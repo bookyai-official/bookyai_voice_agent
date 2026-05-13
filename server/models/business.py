@@ -7,7 +7,7 @@ class BusinessConfiguration(Base):
     __tablename__ = "business_businessconfiguration"
     
     id = Column(Integer, primary_key=True, index=True)
-    business_id = Column(Integer, unique=True, nullable=False)
+    business_id = Column(String(100), unique=True, nullable=False)
     
     # Voice/Twilio Configuration
     voice_enabled = Column(Boolean, default=True)
@@ -30,7 +30,7 @@ class BlockedPhoneNumber(Base):
     __tablename__ = "business_blockedphonenumber"
     
     id = Column(Integer, primary_key=True, index=True)
-    business_id = Column(Integer, nullable=False, index=True)
+    business_id = Column(String(100), nullable=False, index=True)
     phone_number = Column(String(20), index=True, nullable=False)
     reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

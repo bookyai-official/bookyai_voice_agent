@@ -75,7 +75,7 @@ class KnowledgeRetriever:
             results: List[Document] = await vector_store.asimilarity_search(
                 query=query,
                 k=top_k,
-                filter={"business_id": {"$eq": int(business_id)}},
+                filter={"business_id": {"$eq": str(business_id)}},
             )
 
             if not results:
@@ -128,7 +128,7 @@ class KnowledgeRetriever:
                 await vector_store.asimilarity_search_with_score(
                     query=query,
                     k=top_k,
-                    filter={"business_id": {"$eq": int(business_id)}},
+                    filter={"business_id": {"$eq": str(business_id)}},
                 )
             )
 

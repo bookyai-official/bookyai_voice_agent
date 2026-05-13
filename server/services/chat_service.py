@@ -29,12 +29,8 @@ async def get_or_create_chat(
     - SMS/Voice channel: by business_id + phone_number
     - Widget channel: by business_id + session_key
     """
-    # Ensure business_id is an integer
-    try:
-        business_id = int(business_id)
-    except (ValueError, TypeError):
-        logger.error("[CHAT SERVICE] Invalid business_id provided: %s", business_id)
-        raise ChatServiceError(f"Invalid business_id: {business_id}")
+    # Ensure business_id is a string to match PostgreSQL VARCHAR column
+    business_id = str(business_id)
 
     async with AsyncSessionLocal() as db:
 

@@ -18,7 +18,7 @@ class Chat(Base):
     __tablename__ = "ai_agent_chat"
 
     id = Column(Integer, primary_key=True, index=True)
-    business_id = Column(Integer, nullable=False)
+    business_id = Column(String(100), nullable=False)
     lead_id = Column(Integer, nullable=True)
     phone_number = Column(String(20), nullable=True, index=True)
     session_key = Column(String(100), nullable=True, index=True)

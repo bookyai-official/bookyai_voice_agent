@@ -6,7 +6,7 @@ from models.base import Base
 class AIAgent(Base):
     __tablename__ = "ai_agent_aiagent"
     id = Column(Integer, primary_key=True, index=True)
-    business_id = Column(Integer, nullable=True) # ForeignKey to Django Business model
+    business_id = Column(String(100), nullable=True) # ForeignKey to Django Business model
     name = Column(String(100), nullable=False)
     
     # Modular Prompt Fields
