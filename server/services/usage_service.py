@@ -12,11 +12,7 @@ class UsageService:
         """
         Fetches the active subscription and its current usage tracker for a business.
         """
-        try:
-            business_id = int(business_id)
-        except (ValueError, TypeError):
-            logger.error("[USAGE SERVICE] Invalid business_id provided: %s", business_id)
-            return None, None
+        business_id = str(business_id)
 
         # 1. Get active/trialing subscription
         stmt = (
@@ -52,11 +48,7 @@ class UsageService:
         """
         Checks if a business has remaining usage for the given type ('minutes' or 'sms').
         """
-        try:
-            business_id = int(business_id)
-        except (ValueError, TypeError):
-            logger.error("[USAGE SERVICE] Invalid business_id provided: %s", business_id)
-            return False
+        business_id = str(business_id)
 
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
         
@@ -101,11 +93,7 @@ class UsageService:
         Returns the number of remaining units (minutes or SMS) for a business.
         Returns a very large number if unlimited.
         """
-        try:
-            business_id = int(business_id)
-        except (ValueError, TypeError):
-            logger.error("[USAGE SERVICE] Invalid business_id provided: %s", business_id)
-            return 0
+        business_id = str(business_id)
 
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
         
@@ -141,11 +129,7 @@ class UsageService:
         Increments usage for a business.
         Prioritizes the monthly allowance, then consumes from CreditBalance.
         """
-        try:
-            business_id = int(business_id)
-        except (ValueError, TypeError):
-            logger.error("[USAGE SERVICE] Invalid business_id provided: %s", business_id)
-            return
+        business_id = str(business_id)
 
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
         

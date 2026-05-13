@@ -16,7 +16,7 @@ class Subscription(Base):
     __tablename__ = "subscription_subscription"
     
     id = Column(Integer, primary_key=True, index=True)
-    business_id = Column(Integer, index=True)
+    business_id = Column(String(100), index=True)
     plan_id = Column(Integer, ForeignKey("subscription_subscriptionplan.id"))
     status = Column(String(30))
     current_period_start = Column(DateTime)
@@ -41,6 +41,6 @@ class CreditBalance(Base):
     __tablename__ = "subscription_creditbalance"
     
     id = Column(Integer, primary_key=True, index=True)
-    business_id = Column(Integer, unique=True, index=True)
+    business_id = Column(String(100), unique=True, index=True)
     additional_minutes = Column(Integer, default=0)
     additional_sms = Column(Integer, default=0)
