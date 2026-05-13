@@ -10,6 +10,7 @@ from models.system import SystemSetting
 from agents.sms_agent import SMSAgent
 from agents.voice_agent import VoiceAgent
 from agents.tools import get_tools
+from rag.retriever import KnowledgeRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +49,15 @@ class AgentFactory:
             # 3. Get Tools
             tools = get_tools(agent_config, twilio_client, call_sid)
 
-            # 4. Instantiate SMSAgent
+            # 4. Instantiate SMSAgent with RAG retriever
             return SMSAgent(
                 model_name=text_model,
                 openai_api_key=openai_api_key,
-                system_prompt=agent_config.get_compiled_prompt(), # Use fresh compiled prompt
+                system_prompt=agent_config.get_compiled_prompt(),
                 tools=tools,
                 temperature=agent_config.temperature or 0.7,
+                business_id=agent_config.business_id,
+                retriever=KnowledgeRetriever,
                 gemini_api_key=sys_settings.gemini_api_key if sys_settings else None,
                 grok_api_key=sys_settings.grok_api_key if sys_settings else None,
                 deepseek_api_key=sys_settings.deepseek_api_key if sys_settings else None
@@ -89,17 +92,18 @@ class AgentFactory:
             # 3. Get Tools
             tools = get_tools(agent_config, twilio_client, call_sid)
 
-
-            # 4. Instantiate VoiceAgent
+            # 4. Instantiate VoiceAgent with RAG retriever
             return VoiceAgent(
                 model_name=realtime_model,
                 openai_api_key=openai_api_key,
-                system_prompt=agent_config.get_compiled_prompt(), # Use fresh compiled prompt
+                system_prompt=agent_config.get_compiled_prompt(),
                 tools=tools,
                 temperature=agent_config.temperature or 0.8,
                 voice=agent_config.voice or "alloy",
                 vad_threshold=agent_config.vad_threshold or 0.5,
                 silence_duration_ms=agent_config.silence_duration_ms or 1000,
+                business_id=agent_config.business_id,
+                retriever=KnowledgeRetriever,
                 gemini_api_key=sys_settings.gemini_api_key if sys_settings else None,
                 grok_api_key=sys_settings.grok_api_key if sys_settings else None,
                 deepseek_api_key=sys_settings.deepseek_api_key if sys_settings else None

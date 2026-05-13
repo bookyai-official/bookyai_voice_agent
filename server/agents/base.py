@@ -117,7 +117,40 @@ class BaseAgent:
         if merged_context:
             full_input = f"CONTEXT:\n{merged_context}\n\nUSER MESSAGE:\n{user_input}"
 
-        
+        # ── DEBUG: Full Prompt Visibility ─────────────────────────────────
+        separator = "=" * 70
+        logger.info(
+            "\n%s\n"
+            "📋 [PROMPT DEBUG] Agent Run — thread=%s\n"
+            "%s\n"
+            "🤖 SYSTEM PROMPT:\n%s\n"
+            "%s\n"
+            "📚 RAG CONTEXT (from Knowledge Base):\n%s\n"
+            "%s\n"
+            "📝 ADDITIONAL CONTEXT (lead info, etc.):\n%s\n"
+            "%s\n"
+            "🔀 MERGED CONTEXT:\n%s\n"
+            "%s\n"
+            "💬 USER INPUT (original): %s\n"
+            "💬 FULL INPUT (with context injected):\n%s\n"
+            "%s",
+            separator,
+            thread_id,
+            separator,
+            self.base_prompt_text,
+            "-" * 70,
+            rag_context if rag_context else "(EMPTY — No RAG context retrieved)",
+            "-" * 70,
+            additional_context if additional_context else "(EMPTY)",
+            "-" * 70,
+            merged_context if merged_context else "(EMPTY — No context to inject)",
+            "-" * 70,
+            user_input,
+            full_input,
+            separator,
+        )
+        # ── END DEBUG ─────────────────────────────────────────────────────
+
         # Convert DB history to LangChain messages
         lc_history = []
         if history:
@@ -125,19 +158,21 @@ class BaseAgent:
             for msg in history:
                 role = "USER" if msg.role == "user" else "AGENT"
                 content = msg.content
-                print(f"  [{role} (DB)]: {content[:100]}...")
+                logger.info("  [%s (DB)]: %s...", role, content[:100])
                 if msg.role == "user":
                     lc_history.append(HumanMessage(content=content))
                 elif msg.role == "assistant":
                     lc_history.append(AIMessage(content=content))
-        
 
         try:
             # Prepare input: System prompt is already in the agent, 
             # we just pass history + current message.
             input_data = {"messages": lc_history + [("user", full_input)]}
             
-            config = {"configurable": {"thread_id": thread_id}}
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": 25,
+            }
             
             # Execute agent
             result = await self.agent.ainvoke(input_data, config=config)
@@ -145,12 +180,27 @@ class BaseAgent:
             # Extract last message from result
             if "messages" in result and len(result["messages"]) > 0:
                 response = result["messages"][-1].content
-                print(f"DEBUG: [AGENT RESPONSE]: {response[:200]}...")
+                logger.info(
+                    "\n%s\n"
+                    "✅ [AGENT RESPONSE] (thread=%s):\n%s\n"
+                    "%s",
+                    separator, thread_id, response[:500], separator
+                )
                 return response
             
             return "I'm sorry, I couldn't generate a response."
         
         except Exception as e:
+            error_str = str(e)
+            # Handle loop detection errors gracefully
+            if "looping" in error_str.lower() or "loop detection" in error_str.lower():
+                logger.warning(
+                    "[BASE AGENT] Loop detection triggered (thread=%s). "
+                    "The agent may have repeated itself. Error: %s",
+                    thread_id, error_str
+                )
+                return "I apologize, but I seem to be having trouble processing your request. Could you please rephrase your question?"
+            
             logger.error(f"[BASE AGENT] Error during execution: {e}", exc_info=True)
             return "I apologize, but I encountered an error processing your request."
 
@@ -171,11 +221,29 @@ class BaseAgent:
         Returns:
             Formatted context string, or "" if no relevant context found.
         """
-        if not self._retriever or not self.business_id:
+        logger.info(
+            "[RAG] _retrieve_rag_context called — "
+            "retriever=%s, business_id=%s (type=%s)",
+            type(self._retriever).__name__ if self._retriever else "None",
+            self.business_id,
+            type(self.business_id).__name__,
+        )
+
+        if not self._retriever:
+            logger.warning("[RAG] ❌ No retriever configured — skipping RAG")
+            return ""
+
+        if not self.business_id:
+            logger.warning("[RAG] ❌ No business_id set on agent — skipping RAG")
             return ""
 
         try:
             from core.database import AsyncSessionLocal
+
+            logger.info(
+                "[RAG] 🔍 Querying Pinecone for business_id=%s, query='%s'",
+                self.business_id, user_message[:80],
+            )
 
             async with AsyncSessionLocal() as db:
                 context = await self._retriever.retrieve_with_scores(
@@ -183,11 +251,25 @@ class BaseAgent:
                     business_id=str(self.business_id),
                     db=db,
                     top_k=4,
-                    score_threshold=0.7,
+                    score_threshold=0.4,
                 )
+
+            if context:
+                logger.info(
+                    "[RAG] ✅ Retrieved %d chars of knowledge base context",
+                    len(context),
+                )
+            else:
+                logger.warning(
+                    "[RAG] ⚠️ No relevant context found for business_id=%s",
+                    self.business_id,
+                )
+
             return context
         except Exception as e:
-            logger.warning("[BASE AGENT] RAG retrieval failed: %s", e)
+            logger.error(
+                "[RAG] ❌ RAG retrieval failed: %s", e, exc_info=True
+            )
             return ""
 
     @staticmethod

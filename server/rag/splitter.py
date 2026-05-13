@@ -94,7 +94,7 @@ class ChunkSplitter:
             chunk.metadata.update({
                 "source": source_name,
                 "source_type": source_type,
-                "business_id": str(business_id),
+                "business_id": int(business_id),
                 "knowledge_base_id": knowledge_base_id,
                 "document_id": document_id,
                 "chunk_index": index,

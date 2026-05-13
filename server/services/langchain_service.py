@@ -40,10 +40,7 @@ async def get_chat_response(
     Returns:
         The agent's text response.
     """
-    # 1. Save user message to DB first
-    await save_message(chat_id, "user", user_message)
-
-    # 2. Create Agent via Factory
+    # 1. Create Agent via Factory
     if channel == "voice":
         agent = await AgentFactory.create_voice_agent(
             agent_id=agent_id,
@@ -56,13 +53,17 @@ async def get_chat_response(
             openai_api_key=settings.OPENAI_API_KEY
         )
     
-    # 3. Use chat_id as thread_id for persistence
+    # 2. Use chat_id as thread_id for persistence
     thread_id = str(chat_id)
     
-    # 4. Load History from DB and hydrate the Agent Checkpointer
+    # 3. Load History from DB BEFORE saving the current message
+    #    (prevents the current message from appearing in both history and input)
     history = await _load_history_from_db(chat_id)
     if hasattr(agent, "hydrate_history"):
         await agent.hydrate_history(thread_id, history)
+
+    # 4. Save user message to DB (after loading history to avoid duplication)
+    await save_message(chat_id, "user", user_message)
     
     # 5. Execute Agent (LangChain) with DB History
     response = await agent.ask(user_message, thread_id, additional_context, history=history)
