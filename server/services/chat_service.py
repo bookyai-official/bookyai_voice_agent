@@ -18,7 +18,7 @@ class ChatServiceError(Exception):
     pass
 
 async def get_or_create_chat(
-    business_id: int,
+    business_id: int | str,
     phone_number: str | None = None,
     session_key: str | None = None,
 ) -> Chat:
@@ -29,7 +29,15 @@ async def get_or_create_chat(
     - SMS/Voice channel: by business_id + phone_number
     - Widget channel: by business_id + session_key
     """
+    # Ensure business_id is an integer
+    try:
+        business_id = int(business_id)
+    except (ValueError, TypeError):
+        logger.error("[CHAT SERVICE] Invalid business_id provided: %s", business_id)
+        raise ChatServiceError(f"Invalid business_id: {business_id}")
+
     async with AsyncSessionLocal() as db:
+
         query = select(Chat).where(Chat.business_id == business_id, Chat.is_active == True)
 
         if phone_number:

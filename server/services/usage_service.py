@@ -8,10 +8,16 @@ logger = logging.getLogger(__name__)
 
 class UsageService:
     @staticmethod
-    async def get_active_usage_tracker(db: AsyncSession, business_id: int):
+    async def get_active_usage_tracker(db: AsyncSession, business_id: int | str):
         """
         Fetches the active subscription and its current usage tracker for a business.
         """
+        try:
+            business_id = int(business_id)
+        except (ValueError, TypeError):
+            logger.error("[USAGE SERVICE] Invalid business_id provided: %s", business_id)
+            return None, None
+
         # 1. Get active/trialing subscription
         stmt = (
             select(Subscription)
@@ -42,10 +48,16 @@ class UsageService:
         return subscription, tracker
 
     @staticmethod
-    async def has_remaining_usage(db: AsyncSession, business_id: int, usage_type: str) -> bool:
+    async def has_remaining_usage(db: AsyncSession, business_id: int | str, usage_type: str) -> bool:
         """
         Checks if a business has remaining usage for the given type ('minutes' or 'sms').
         """
+        try:
+            business_id = int(business_id)
+        except (ValueError, TypeError):
+            logger.error("[USAGE SERVICE] Invalid business_id provided: %s", business_id)
+            return False
+
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
         
         if not subscription:
@@ -84,11 +96,17 @@ class UsageService:
         return False
 
     @staticmethod
-    async def get_remaining_usage(db: AsyncSession, business_id: int, usage_type: str) -> int:
+    async def get_remaining_usage(db: AsyncSession, business_id: int | str, usage_type: str) -> int:
         """
         Returns the number of remaining units (minutes or SMS) for a business.
         Returns a very large number if unlimited.
         """
+        try:
+            business_id = int(business_id)
+        except (ValueError, TypeError):
+            logger.error("[USAGE SERVICE] Invalid business_id provided: %s", business_id)
+            return 0
+
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
         
         if not subscription:
@@ -118,11 +136,17 @@ class UsageService:
         return remaining_from_plan + additional
 
     @staticmethod
-    async def update_usage(db: AsyncSession, business_id: int, usage_type: str, amount: int):
+    async def update_usage(db: AsyncSession, business_id: int | str, usage_type: str, amount: int):
         """
         Increments usage for a business.
         Prioritizes the monthly allowance, then consumes from CreditBalance.
         """
+        try:
+            business_id = int(business_id)
+        except (ValueError, TypeError):
+            logger.error("[USAGE SERVICE] Invalid business_id provided: %s", business_id)
+            return
+
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
         
         if not subscription:
