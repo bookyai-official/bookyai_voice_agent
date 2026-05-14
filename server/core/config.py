@@ -40,7 +40,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
         "http://localhost:8001",
-        "http://127.0.0.1:8001"
+        "http://127.0.0.1:8001",
+        "https://c973-223-123-85-194.ngrok-free.app",
     ]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

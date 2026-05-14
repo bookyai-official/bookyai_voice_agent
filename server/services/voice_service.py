@@ -56,21 +56,29 @@ class VoiceService:
         call_mode: str = "voice"
     ):
         """
-        Initializes a CallRecord in the database.
+        Initializes a CallRecord in the database or updates it if it already exists.
         """
         async with AsyncSessionLocal() as db:
-            new_call = CallRecord(
-                agent_id=agent_id,
-                call_sid=call_sid,
-                status="in-progress",
-                from_number=from_number,
-                to_number=to_number,
-                call_type=call_type,
-                call_mode=call_mode
-            )
-            db.add(new_call)
-            await db.commit()
-            logger.info(f"[VOICE SERVICE] Initialized CallRecord for {call_sid}")
+            res = await db.execute(select(CallRecord).where(CallRecord.call_sid == call_sid))
+            existing_call = res.scalar_one_or_none()
+            
+            if existing_call:
+                existing_call.status = "in-progress"
+                await db.commit()
+                logger.info(f"[VOICE SERVICE] Updated CallRecord to in-progress for {call_sid}")
+            else:
+                new_call = CallRecord(
+                    agent_id=agent_id,
+                    call_sid=call_sid,
+                    status="in-progress",
+                    from_number=from_number,
+                    to_number=to_number,
+                    call_type=call_type,
+                    call_mode=call_mode
+                )
+                db.add(new_call)
+                await db.commit()
+                logger.info(f"[VOICE SERVICE] Initialized CallRecord for {call_sid}")
 
     @staticmethod
     async def finalize_call(
