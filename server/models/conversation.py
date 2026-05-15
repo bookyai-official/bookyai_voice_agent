@@ -28,12 +28,18 @@ class Chat(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active = Column(Boolean, default=True)
     enable_ai = Column(Boolean, default=True)
+    fb_psid = Column(String(100), nullable=True, index=True)
+    ig_sid = Column(String(100), nullable=True, index=True)
+    wa_id = Column(String(100), nullable=True, index=True)
 
     messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan", order_by="Message.created_at")
 
     __table_args__ = (
         UniqueConstraint("business_id", "phone_number", name="uq_chat_business_phone"),
         UniqueConstraint("business_id", "session_key", name="uq_chat_business_session"),
+        UniqueConstraint("business_id", "fb_psid", name="uq_chat_business_fb"),
+        UniqueConstraint("business_id", "ig_sid", name="uq_chat_business_ig"),
+        UniqueConstraint("business_id", "wa_id", name="uq_chat_business_wa"),
     )
 
 

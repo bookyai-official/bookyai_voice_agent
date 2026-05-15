@@ -24,9 +24,10 @@ def get_tools(
     """
     tools = []
     
-    # 1. Add Internal Tools (Voice control)
-    # These are always available but will return errors if used on non-voice channels
-    internal_tools = create_internal_tools(twilio_client, call_sid)
+    # 1. Add Internal Tools (Voice control & Knowledge Base)
+    # These are always available but will return errors if used on non-voice channels (for call controls)
+    business_id = str(agent_config.business_id) if hasattr(agent_config, 'business_id') and agent_config.business_id else None
+    internal_tools = create_internal_tools(twilio_client, call_sid, business_id=business_id)
     tools.extend(internal_tools)
     
     # 2. Add External Tools from Database Config

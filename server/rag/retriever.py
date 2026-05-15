@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 DEFAULT_INDEX_NAME = settings.PINECONE_INDEX_NAME
-DEFAULT_TOP_K = 4
-DEFAULT_SCORE_THRESHOLD = 0.5
+DEFAULT_TOP_K = 5
+DEFAULT_SCORE_THRESHOLD = 0.3
 
 CONTEXT_SEPARATOR = "\n\n---\n\n"
 

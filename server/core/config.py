@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Internal auth simple token (for basic CRUD protection)
     API_SECRET_TOKEN: str
 
+    # Facebook Settings
+    FB_VERIFY_TOKEN: Optional[str] = "admin"
+
     # CORS settings
     ALLOWED_ORIGINS: list[str] = [
         "https://booky-ai.com",
@@ -42,6 +45,9 @@ class Settings(BaseSettings):
         "http://localhost:8001",
         "http://127.0.0.1:8001",
         "https://c973-223-123-85-194.ngrok-free.app",
+        'https://1aa3-223-123-85-194.ngrok-free.app',
+        'https://63af-223-123-86-194.ngrok-free.app',
+        
     ]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

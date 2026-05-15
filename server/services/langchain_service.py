@@ -41,6 +41,7 @@ async def get_chat_response(
         The agent's text response.
     """
     # 1. Create Agent via Factory
+    print(f"[LANGCHAIN DEBUG] Creating agent for Agent ID {agent_id} (Channel: {channel})...")
     if channel == "voice":
         agent = await AgentFactory.create_voice_agent(
             agent_id=agent_id,
@@ -59,6 +60,7 @@ async def get_chat_response(
     # 3. Load History from DB BEFORE saving the current message
     #    (prevents the current message from appearing in both history and input)
     history = await _load_history_from_db(chat_id)
+    print(f"[LANGCHAIN DEBUG] Loaded {len(history)} messages from history for Chat ID {chat_id}")
     if hasattr(agent, "hydrate_history"):
         await agent.hydrate_history(thread_id, history)
 
@@ -66,7 +68,9 @@ async def get_chat_response(
     await save_message(chat_id, "user", user_message)
     
     # 5. Execute Agent (LangChain) with DB History
+    print(f"[LANGCHAIN DEBUG] Invoking agent for Chat ID {chat_id} with user message: {user_message[:50]}...")
     response = await agent.ask(user_message, thread_id, additional_context, history=history)
+    print(f"[LANGCHAIN DEBUG] Agent Response for Chat {chat_id}: {response[:50]}...")
     
     # 6. Save assistant response to DB
     await save_message(chat_id, "assistant", response)

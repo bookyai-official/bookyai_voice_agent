@@ -6,7 +6,8 @@ logger = logging.getLogger(__name__)
 
 def create_internal_tools(
     twilio_client: Optional[any] = None, 
-    call_sid: Optional[str] = None
+    call_sid: Optional[str] = None,
+    business_id: Optional[str] = None
 ):
     """
     Factory function to create internal agent tools with injected dependencies.
@@ -14,6 +15,7 @@ def create_internal_tools(
     Args:
         twilio_client: An initialized Twilio REST client
         call_sid: The SID of the active call (for voice channel)
+        business_id: Optional business ID for knowledge base queries
     """
 
     @tool
@@ -56,4 +58,53 @@ def create_internal_tools(
             logger.error(f"[TOOL] Failed to transfer call {call_sid}: {e}")
             return f"Error: Could not transfer the call. {str(e)}"
 
-    return [end_call, transfer_call]
+    tools_list = [end_call, transfer_call]
+    
+    if business_id:
+        from langchain_core.tools import StructuredTool
+        from pydantic import BaseModel, Field
+        from rag.retriever import KnowledgeRetriever
+        from core.database import AsyncSessionLocal
+        import asyncio
+
+        class KnowledgeBaseQuery(BaseModel):
+            query: str = Field(description="The search query to look up in the knowledge base.")
+
+        async def query_knowledge_base_func(query: str) -> str:
+            """Search the business knowledge base for information."""
+            try:
+                async with AsyncSessionLocal() as db:
+                    context = await KnowledgeRetriever.retrieve_with_scores(
+                        query=query,
+                        business_id=business_id,
+                        db=db
+                    )
+                if not context:
+                    return "No relevant information found in the knowledge base for the given query."
+                return context
+            except Exception as e:
+                logger.error(f"[TOOL] Failed to query knowledge base: {e}")
+                return "Error: Could not retrieve information from the knowledge base."
+
+        def sync_query_knowledge_base_func(query: str) -> str:
+            try:
+                loop = asyncio.get_running_loop()
+                return loop.create_task(query_knowledge_base_func(query))
+            except RuntimeError:
+                return asyncio.run(query_knowledge_base_func(query))
+
+        kb_tool = StructuredTool.from_function(
+            func=sync_query_knowledge_base_func,
+            coroutine=query_knowledge_base_func,
+            name="query_knowledge_base",
+            description=(
+                "CRITICAL: Use this tool ONLY to look up specific facts about the business "
+                "DO NOT use this tool for casual conversation, greetings, pleasantries, or general knowledge. "
+                "If the user asks a question about the business that you do not already know, then run this tool to get the context. "
+                "If you get it, add it to your response. Else, handle gracefully."
+            ),
+            args_schema=KnowledgeBaseQuery,
+        )
+        tools_list.append(kb_tool)
+
+    return tools_list
