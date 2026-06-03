@@ -142,6 +142,19 @@ async def process_webhook_message(platform: str, business_platform_id: str, send
             await save_message(chat.id, "user", message_text)
             return
 
+        # 4.5 Check Feature Access
+        required_feature = "fb_messenger_agent" if platform == "facebook" else "instagram_agent"
+        has_feature = await UsageService.has_feature_access(session, agent.business_id, required_feature)
+        if not has_feature:
+            print(f"[PROCESS] Feature '{required_feature}' not allowed for Business {agent.business_id}")
+            await save_message(chat.id, "user", message_text)
+            await save_message(
+                chat.id,
+                "error",
+                f"AI response skipped: {platform.capitalize()} integration feature is not included in your subscription plan."
+            )
+            return
+
         # 5. Check Usage Limit (proxying as 'sms')
         has_usage = await UsageService.has_remaining_usage(session, agent.business_id, "sms")
         if not has_usage:

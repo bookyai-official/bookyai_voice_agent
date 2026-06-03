@@ -76,6 +76,23 @@ async def widget_chat(agent_id: int, payload: WidgetMessageRequest):
             session_key=payload.session_key,
         )
 
+    # ── 2.6 Check Feature Access ──────────────────────────────────────────
+    async with AsyncSessionLocal() as db_session:
+        has_feature = await UsageService.has_feature_access(db_session, agent.business_id, "webchat_agent")
+        if not has_feature:
+            from services.chat_service import save_message
+            await save_message(chat.id, "user", payload.message.strip())
+            await save_message(
+                chat.id,
+                "error",
+                "AI response skipped: Web chat widget feature is not included in your subscription plan."
+            )
+            return WidgetMessageResponse(
+                content="AI assistance is currently unavailable. Web chat widget feature is not included in your current subscription plan.",
+                chat_id=chat.id,
+                session_key=payload.session_key,
+            )
+
     # ── 2.7 Check Usage Limit ─────────────────────────────────────────────
     async with AsyncSessionLocal() as db_session:
         has_usage = await UsageService.has_remaining_usage(db_session, agent.business_id, "sms")

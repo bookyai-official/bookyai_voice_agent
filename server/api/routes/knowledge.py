@@ -30,6 +30,7 @@ from schemas.knowledge import (
 from rag.ingestor import KnowledgeIngestor
 from rag.pinecone_client import PineconeClientManager
 
+from services.usage_service import UsageService
 from core.config import settings
 
 router = APIRouter(prefix="/knowledge-bases", tags=["Knowledge Bases"])
@@ -95,6 +96,13 @@ async def create_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeBaseRead:
     """Create a new knowledge base for a business."""
+    # Check feature access
+    has_feature = await UsageService.has_feature_access(db, payload.business_id, "custom_knowledge_base")
+    if not has_feature:
+        raise HTTPException(
+            status_code=403,
+            detail="Custom Knowledge Base feature is not included in your current subscription plan. Please upgrade to use this feature."
+        )
     # Check for duplicate name within the business
     existing = await db.execute(
         select(KnowledgeBase).where(
@@ -204,6 +212,14 @@ async def upload_document(
     """
     kb = await _get_knowledge_base_or_404(db, knowledge_base_id)
 
+    # Check feature access
+    has_feature = await UsageService.has_feature_access(db, kb.business_id, "custom_knowledge_base")
+    if not has_feature:
+        raise HTTPException(
+            status_code=403,
+            detail="Custom Knowledge Base feature is not included in your current subscription plan. Please upgrade to use this feature."
+        )
+
     # Fetch the document created by Django
     result = await db.execute(
         select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
@@ -271,6 +287,14 @@ async def ingest_url(
     Returns immediately — ingestion runs in the background.
     """
     kb = await _get_knowledge_base_or_404(db, knowledge_base_id)
+
+    # Check feature access
+    has_feature = await UsageService.has_feature_access(db, kb.business_id, "custom_knowledge_base")
+    if not has_feature:
+        raise HTTPException(
+            status_code=403,
+            detail="Custom Knowledge Base feature is not included in your current subscription plan. Please upgrade to use this feature."
+        )
 
     # Fetch the document created by Django
     result = await db.execute(
@@ -382,6 +406,14 @@ async def reingest_document(
     document = result.scalar_one_or_none()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found.")
+
+    # Check feature access
+    has_feature = await UsageService.has_feature_access(db, document.knowledge_base.business_id, "custom_knowledge_base")
+    if not has_feature:
+        raise HTTPException(
+            status_code=403,
+            detail="Custom Knowledge Base feature is not included in your current subscription plan. Please upgrade to use this feature."
+        )
 
     # Delete existing vectors from Pinecone
     namespace = str(document.knowledge_base.business_id)

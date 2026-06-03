@@ -102,6 +102,14 @@ async def handle_incoming_call(
                 response.reject() # Or response.hangup()
                 return HTMLResponse(content=str(response), media_type="application/xml")
 
+        # ── 2.3 Check Feature Access ────────────────────────────────────────
+        has_feature = await UsageService.has_feature_access(db, agent.business_id, "calling_agent")
+        if not has_feature:
+            # Calling agent feature is not allowed for this business. Reject the call.
+            response = VoiceResponse()
+            response.reject()
+            return HTMLResponse(content=str(response), media_type="application/xml")
+
         # ── 2.5 Check Usage Limit ───────────────────────────────────────────
         has_usage = await UsageService.has_remaining_usage(db, agent.business_id, "minutes")
         if not has_usage:
@@ -185,6 +193,14 @@ async def trigger_outbound_call(request: Request, payload: OutboundCallRequest, 
     )
     if block_result.scalar_one_or_none():
         raise HTTPException(status_code=403, detail="The destination phone number is blocked.")
+
+    # 3.5 Check Feature Access
+    has_feature = await UsageService.has_feature_access(db, agent.business_id, "calling_agent")
+    if not has_feature:
+        raise HTTPException(
+            status_code=403,
+            detail="Calling agent feature is not included in your current subscription plan. Please upgrade to use this feature."
+        )
 
     # 4. Check Usage Limit
     has_usage = await UsageService.has_remaining_usage(db, agent.business_id, "minutes")

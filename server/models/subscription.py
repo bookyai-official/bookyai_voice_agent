@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from models.base import Base
@@ -8,9 +8,10 @@ class SubscriptionPlan(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100))
-    minutes_limit = Column(Integer, default=0)
-    sms_limit = Column(Integer, default=0)
+    allowed_features = Column(JSON, default=list, nullable=True)
+    usage_limits = Column(JSON, default=dict, nullable=True)
     is_active = Column(Boolean, default=True)
+
 
 class Subscription(Base):
     __tablename__ = "subscription_subscription"
@@ -42,5 +43,4 @@ class CreditBalance(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(String(100), unique=True, index=True)
-    additional_minutes = Column(Integer, default=0)
-    additional_sms = Column(Integer, default=0)
+    additional_limits = Column(JSON, default=dict, nullable=True)

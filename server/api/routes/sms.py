@@ -115,6 +115,19 @@ async def handle_incoming_sms(request: Request, agent_id: int):
         await save_message(chat.id, "user", body)
         return Response(content="<Response/>", media_type="application/xml")
 
+    # 3.3 Check Feature Access ───────────────────────────────────────────
+    async with AsyncSessionLocal() as session:
+        has_feature = await UsageService.has_feature_access(session, agent.business_id, "sms_agent")
+        if not has_feature:
+            logger.warning("[SMS] Feature 'sms_agent' not allowed for Business %s.", str(agent.business_id))
+            await save_message(chat.id, "user", body)
+            await save_message(
+                chat.id,
+                "error",
+                "AI response skipped: SMS agent feature is not included in your current subscription plan. Please upgrade your plan."
+            )
+            return Response(content="<Response/>", media_type="application/xml")
+
     # 3.5 Check Usage Limit ─────────────────────────────────────────────
     async with AsyncSessionLocal() as session:
         has_usage = await UsageService.has_remaining_usage(session, agent.business_id, "sms")
@@ -241,6 +254,15 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
         )
         if block_result.scalar_one_or_none():
             raise HTTPException(status_code=403, detail="The destination phone number is blocked.")
+
+    # ── 2.6 Check Feature Access ──────────────────────────────────────────
+    async with AsyncSessionLocal() as session:
+        has_feature = await UsageService.has_feature_access(session, agent.business_id, "sms_agent")
+        if not has_feature:
+            raise HTTPException(
+                status_code=403,
+                detail="SMS agent feature is not included in your current subscription plan. Please upgrade to use this feature."
+            )
 
     # ── 2.7 Check Usage Limit ─────────────────────────────────────────────
     async with AsyncSessionLocal() as session:

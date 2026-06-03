@@ -44,6 +44,33 @@ class UsageService:
         return subscription, tracker
 
     @staticmethod
+    async def has_feature_access(db: AsyncSession, business_id: int | str, feature_key: str) -> bool:
+        """
+        Checks if a business has access to a specific feature key based on their subscription plan.
+        """
+        business_id = str(business_id)
+        subscription, _ = await UsageService.get_active_usage_tracker(db, business_id)
+        
+        if not subscription:
+            logger.warning(f"No active subscription found for Business {business_id} to check feature {feature_key}")
+            return False
+
+        # Get the plan to check features
+        stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
+        result = await db.execute(stmt)
+        plan = result.scalar_one_or_none()
+        
+        if not plan:
+            return False
+
+        # Empty allowed_features list = all features allowed (backward-compatible default)
+        allowed = getattr(plan, "allowed_features", None)
+        if not allowed:  # None or []
+            return True
+            
+        return feature_key in allowed
+
+    @staticmethod
     async def has_remaining_usage(db: AsyncSession, business_id: int | str, usage_type: str) -> bool:
         """
         Checks if a business has remaining usage for the given type ('minutes' or 'sms').
@@ -64,7 +91,8 @@ class UsageService:
         if not plan:
             return False
 
-        limit = getattr(plan, f"{usage_type}_limit", 0)
+        limits = plan.usage_limits if isinstance(plan.usage_limits, dict) else {}
+        limit = limits.get(usage_type, 0)
         
         # 0 means unlimited
         if limit == 0:
@@ -81,7 +109,8 @@ class UsageService:
         balance = result.scalar_one_or_none()
         
         if balance:
-            additional = getattr(balance, f"additional_{usage_type}", 0)
+            additional_limits = balance.additional_limits if isinstance(balance.additional_limits, dict) else {}
+            additional = additional_limits.get(usage_type, 0)
             if additional > 0:
                 return True
                 
@@ -108,14 +137,16 @@ class UsageService:
         if not plan:
             return 0
 
-        limit = getattr(plan, f"{usage_type}_limit", 0)
+        limits = plan.usage_limits if isinstance(plan.usage_limits, dict) else {}
+        limit = limits.get(usage_type, 0)
         used = getattr(tracker, f"{usage_type}_used", 0) if tracker else 0
 
         # Check CreditBalance (add-ons)
         stmt = select(CreditBalance).where(CreditBalance.business_id == business_id)
         result = await db.execute(stmt)
         balance = result.scalar_one_or_none()
-        additional = getattr(balance, f"additional_{usage_type}", 0) if balance else 0
+        additional_limits = balance.additional_limits if (balance and isinstance(balance.additional_limits, dict)) else {}
+        additional = additional_limits.get(usage_type, 0)
 
         if limit == 0:
             return 999999 # Effectively unlimited
@@ -141,7 +172,8 @@ class UsageService:
         stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
         result = await db.execute(stmt)
         plan = result.scalar_one_or_none()
-        limit = getattr(plan, f"{usage_type}_limit", 0) if plan else 0
+        limits = plan.usage_limits if (plan and isinstance(plan.usage_limits, dict)) else {}
+        limit = limits.get(usage_type, 0)
 
         # 2. Update UsageTracker
         if tracker:
@@ -160,11 +192,14 @@ class UsageService:
         balance = result.scalar_one_or_none()
         
         if balance:
-            additional = getattr(balance, f"additional_{usage_type}", 0)
+            additional_limits = balance.additional_limits if isinstance(balance.additional_limits, dict) else {}
+            additional = additional_limits.get(usage_type, 0)
             if additional > 0:
                 # Deduct from additional credits
                 new_val = max(0, additional - amount)
-                setattr(balance, f"additional_{usage_type}", new_val)
+                new_limits = dict(additional_limits)
+                new_limits[usage_type] = new_val
+                balance.additional_limits = new_limits
                 await db.commit()
                 logger.info(f"Deducted {amount} {usage_type} from CreditBalance for Business {business_id}")
                 return

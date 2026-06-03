@@ -38,6 +38,8 @@ from rag.pinecone_client import PineconeClientManager
 logger = logging.getLogger(__name__)
 
 
+from models.subscription import Subscription, SubscriptionPlan
+
 class KnowledgeIngestor:
     """
     Orchestrates the full ingestion pipeline for a single KnowledgeDocument.
@@ -91,8 +93,52 @@ class KnowledgeIngestor:
 
                 # Save raw text to document.content
                 full_content = "\n\n".join(doc.page_content for doc in raw_docs)
+                new_chars_count = len(full_content)
+
+                # Fetch active subscription and check KB character limit
+                stmt_sub = (
+                    select(Subscription)
+                    .where(
+                        Subscription.business_id == str(kb.business_id),
+                        Subscription.status.in_(['active', 'trialing']),
+                        Subscription.ended_at == None
+                    )
+                    .order_by(Subscription.id.desc())
+                    .limit(1)
+                )
+                sub_result = await db.execute(stmt_sub)
+                subscription = sub_result.scalar_one_or_none()
+                if subscription:
+                    plan_stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
+                    plan_result = await db.execute(plan_stmt)
+                    plan = plan_result.scalar_one_or_none()
+                    if plan:
+                        limits = plan.usage_limits or {}
+                        if isinstance(limits, dict):
+                            kb_chars_limit = limits.get('kb_chars', 0)
+                            if kb_chars_limit > 0:
+                                # Fetch other documents for this business to calculate current usage
+                                stmt_docs = (
+                                    select(KnowledgeDocument)
+                                    .join(KnowledgeBase)
+                                    .where(
+                                        KnowledgeBase.business_id == kb.business_id,
+                                        KnowledgeDocument.id != document_id
+                                    )
+                                )
+                                docs_result = await db.execute(stmt_docs)
+                                docs = docs_result.scalars().all()
+                                current_kb_chars = sum(len(d.content) for d in docs if d.content)
+                                
+                                if (current_kb_chars + new_chars_count) > kb_chars_limit:
+                                    raise ValueError(
+                                        f"Adding this document would exceed your plan's Knowledge Base limit of {kb_chars_limit} characters. "
+                                        f"(Currently using {current_kb_chars} characters, this document has {new_chars_count} characters)."
+                                    )
+
                 document.content = full_content
                 await db.commit()
+
 
                 # ── 4. Split into chunks with tenant metadata ─────────────
                 chunks = ChunkSplitter.split(
