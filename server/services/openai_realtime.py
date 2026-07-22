@@ -37,7 +37,7 @@ class OpenAIRealtimeClient:
         self.url = f"wss://api.openai.com/v1/realtime?model={self.agent.model_name}"
         self.headers = {
             "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-            "OpenAI-Beta": "realtime=v1"
+            "OpenAI-Beta": "realtime=v2"
         }
 
     async def connect(self):

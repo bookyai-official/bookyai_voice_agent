@@ -65,6 +65,7 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
     )
 
     connection_start_time = asyncio.get_event_loop().time()
+    call_end_time = connection_start_time  # Default in case of early failure
     agent_max_seconds = (agent_config.max_call_duration_minutes or 10) * 60
     max_duration_seconds = min(agent_max_seconds, remaining_seconds)
 
