@@ -33,11 +33,10 @@ class OpenAIRealtimeClient:
         self.total_tokens = 0
         self.cached_tokens = 0
         
-        # Realtime API URL
+        # Realtime API URL (GA endpoint — no Beta header)
         self.url = f"wss://api.openai.com/v1/realtime?model={self.agent.model_name}"
         self.headers = {
             "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-            "OpenAI-Beta": "realtime=v2"
         }
 
     async def connect(self):
@@ -46,37 +45,44 @@ class OpenAIRealtimeClient:
         await self._initialize_session()
 
     async def _initialize_session(self):
-        """Send the initial session configuration using VoiceAgent definitions."""
-        audio_format = "g711_ulaw" if self.channel == "twilio" else "pcm16"
-        
+        """Send the initial session configuration using VoiceAgent definitions (GA format)."""
+        # GA format uses MIME-type audio format objects
+        if self.channel == "twilio":
+            audio_format_obj = {"type": "audio/pcmu"}
+        else:
+            audio_format_obj = {"type": "audio/pcm", "rate": 24000}
+
         instructions = self.agent.get_system_instructions()
         tool_schemas = self.agent.get_tool_schemas()
-
-     
+        voice = getattr(self.agent, 'voice', 'alloy')
 
         session_update = {
             "type": "session.update",
             "session": {
-                "modalities": ["audio", "text"],
+                "type": "realtime",
+                "output_modalities": ["audio", "text"],
                 "instructions": instructions,
-                "voice": getattr(self.agent, 'voice', 'alloy'),
-                "temperature": getattr(self.agent, 'temperature', 0.8),
-                "input_audio_format": audio_format,
-                "output_audio_format": audio_format,
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": getattr(self.agent, 'vad_threshold', 0.5),
-                    "prefix_padding_ms": 500,
-                    "silence_duration_ms": getattr(self.agent, 'silence_duration_ms', 1000)
-                },
                 "input_audio_transcription": {
                     "model": "whisper-1"
                 },
-                "tools": tool_schemas
+                "audio": {
+                    "input": {
+                        "format": audio_format_obj,
+                        "turn_detection": {
+                            "type": "semantic_vad",
+                        },
+                    },
+                    "output": {
+                        "format": audio_format_obj,
+                        "voice": voice,
+                    }
+                },
+                "tools": tool_schemas,
+                "tool_choice": "auto"
             }
         }
         await self.send_event(session_update)
-        logger.info(f"[OPENAI] Session initialized (Channel: {self.channel}, Format: {audio_format}, Voice: {session_update['session']['voice']})")
+        logger.info(f"[OPENAI] Session initialized (Channel: {self.channel}, Format: {audio_format_obj}, Voice: {voice})")
 
     async def send_event(self, event: dict):
         """Send a JSON payload to OpenAI."""
@@ -106,8 +112,8 @@ class OpenAIRealtimeClient:
                 event = json.loads(message)
                 event_type = event.get("type")
 
-                # 1. Handle Audio Relay
-                if event_type == "response.audio.delta":
+                # 1. Handle Audio Relay (GA event name)
+                if event_type == "response.output_audio.delta":
                     base64_audio = event.get("delta")
                     if base64_audio:
                         if self.channel == "twilio":
@@ -119,8 +125,8 @@ class OpenAIRealtimeClient:
                         else:
                             await client_ws.send_json({"type": "audio", "audio": base64_audio})
 
-                # 2. Handle Audio Done
-                elif event_type == "response.audio.done":
+                # 2. Handle Audio Done (GA event name)
+                elif event_type == "response.output_audio.done":
                     if self.channel == "browser":
                         await client_ws.send_json({"type": "audio_done"})
 
@@ -190,7 +196,7 @@ class OpenAIRealtimeClient:
                         break
                 
                 # 5. Transcription & Logging
-                elif event_type == "response.audio_transcript.done":
+                elif event_type == "response.output_audio_transcript.done":
                     transcript = event.get('transcript')
                     if transcript:
                         self.transcript_log.append({"role": "assistant", "text": transcript})
@@ -220,8 +226,13 @@ class OpenAIRealtimeClient:
 
                 # 7. Errors
                 elif event_type == "error":
-                    logger.error(f"[OPENAI] Error event: {event.get('error')}")
-
+                    error_data = event.get('error', {})
+                    error_code = error_data.get('code', '') if isinstance(error_data, dict) else ''
+                    # Suppress expected non-critical errors
+                    if error_code == 'response_cancel_not_active':
+                        logger.debug(f"[OPENAI] Non-critical: {error_data}")
+                    else:
+                        logger.error(f"[OPENAI] Error event: {error_data}")
         except websockets.exceptions.ConnectionClosed:
             logger.info("OpenAI connection closed.")
         except Exception as e:
