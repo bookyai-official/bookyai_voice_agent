@@ -60,14 +60,14 @@ class OpenAIRealtimeClient:
             "type": "session.update",
             "session": {
                 "type": "realtime",
-                "output_modalities": ["audio", "text"],
+                "output_modalities": ["audio"],
                 "instructions": instructions,
-                "input_audio_transcription": {
-                    "model": "whisper-1"
-                },
                 "audio": {
                     "input": {
                         "format": audio_format_obj,
+                        "transcription": {
+                            "model": "whisper-1"
+                        },
                         "turn_detection": {
                             "type": "semantic_vad",
                         },

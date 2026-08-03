@@ -76,13 +76,14 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
         # Greeting
         if agent_config.greeting_message:
             await openai_client.send_event({
-                "type": "response.create",
-                "response": {
-                    "instructions": f"Start by saying exactly: {agent_config.greeting_message}"
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": f"[System Trigger]: Greet the user by saying: '{agent_config.greeting_message}'"}]
                 }
             })
-        else:
-            await openai_client.send_event({"type": "response.create"})
+        await openai_client.send_event({"type": "response.create"})
 
         await websocket.send_json({"type": "status", "status": "connected"})
 
