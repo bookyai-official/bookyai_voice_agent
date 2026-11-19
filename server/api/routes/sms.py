@@ -148,7 +148,7 @@ async def handle_incoming_sms(request: Request, agent_id: int):
         response_text = await get_sms_response(
             agent_id=agent.id,
             chat_id=chat.id,
-            user_message=body
+            user_message=body, feature='sms_agent'
         )
     except Exception as e:
         logger.error("[SMS] LangChain error for Agent %s: %s", str(agent_id), e)
@@ -288,7 +288,7 @@ async def send_outbound_sms(payload: OutboundSMSRequest):
         response_text = await get_sms_response(
             agent_id=agent.id,
             chat_id=chat.id,
-            user_message=user_prompt
+            user_message=user_prompt, feature='sms_agent'
         )
     except Exception as e:
         logger.error("[SMS OUTBOUND] LangChain error for Agent %s: %s", str(payload.agent_id), e)

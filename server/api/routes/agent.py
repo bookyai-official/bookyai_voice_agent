@@ -20,7 +20,7 @@ async def get_voice_preview(voice: str):
     if not settings.OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
     
-    # Fallback for voices not supported by tts-1 model
+    # Fallback for voices not supported by the preview model
     # verse and ballad are Realtime-only for now
     target_voice = voice
     if voice.lower() in ["verse", "ballad"]:

@@ -107,7 +107,7 @@ class KnowledgeRetriever:
         except Exception as e:
             logger.error(
                 "[RETRIEVER] Retrieval failed (business_id=%s): %s",
-                business_id, e, exc_info=True,
+                business_id, 'Knowledge retrieval unavailable', exc_info=False,
             )
             return ""
 
@@ -212,7 +212,7 @@ class KnowledgeRetriever:
         except Exception as e:
             logger.error(
                 "[RETRIEVER] Retrieval failed (business_id=%s): %s",
-                business_id, e, exc_info=True,
+                business_id, 'Knowledge retrieval unavailable', exc_info=False,
             )
             return ""
 
@@ -231,7 +231,7 @@ class KnowledgeRetriever:
             "[RETRIEVER] Creating vector store — index='%s', namespace='%s'",
             index_name, namespace,
         )
-        embedder = await EmbeddingProvider.get_embedder(db)
+        embedder = await EmbeddingProvider.get_embedder(db, business_id=business_id)
         pinecone_mgr = PineconeClientManager()
         return pinecone_mgr.get_vector_store(
             index_name=index_name,

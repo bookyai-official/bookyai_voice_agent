@@ -36,7 +36,7 @@ class OpenAIRealtimeClient:
         # Realtime API URL (GA endpoint — no Beta header)
         self.url = f"wss://api.openai.com/v1/realtime?model={self.agent.model_name}"
         self.headers = {
-            "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+            "Authorization": f"Bearer {self.agent.resolved_api_key}",
         }
 
     async def connect(self):
@@ -84,6 +84,22 @@ class OpenAIRealtimeClient:
         await self.send_event(session_update)
         logger.info(f"[OPENAI] Session initialized (Channel: {self.channel}, Format: {audio_format_obj}, Voice: {voice})")
 
+    async def start_conversation(self, greeting_message: Optional[str] = None):
+        """Start the first response, optionally using the agent's configured greeting."""
+        if greeting_message:
+            await self.send_event({
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": f"[System Trigger]: Greet the user by saying: '{greeting_message}'",
+                    }],
+                },
+            })
+        await self.send_event({"type": "response.create"})
+
     async def send_event(self, event: dict):
         """Send a JSON payload to OpenAI."""
         if self.ws:
@@ -102,7 +118,7 @@ class OpenAIRealtimeClient:
         if self.ws:
             await self.ws.close()
 
-    async def listen(self, client_ws, stream_sid=None, call_sid=None):
+    async def listen(self, client_ws, stream_sid=None, call_sid=None, on_transcript=None):
         """
         Listen to events from OpenAI and relay them to the appropriate client (Twilio or Browser).
         Standardizes event mapping and tool execution logic.
@@ -169,7 +185,7 @@ class OpenAIRealtimeClient:
                             args = json.loads(arguments_json)
                             result_str = await tool.ainvoke(args)
                         except Exception as e:
-                            logger.error(f"Error executing tool {tool_name}: {e}")
+                            logger.error('Realtime tool execution failed; details withheld.')
                             result_str = json.dumps({"error": f"Tool execution failed: {str(e)}"})
                     else:
                         result_str = json.dumps({"error": f"Tool {tool_name} not found."})
@@ -200,6 +216,8 @@ class OpenAIRealtimeClient:
                     transcript = event.get('transcript')
                     if transcript:
                         self.transcript_log.append({"role": "assistant", "text": transcript})
+                        if on_transcript:
+                            on_transcript(self.get_transcript(), self.get_usage())
                         print(f"DEBUG: [VOICE] AGENT: {transcript}")
                         logger.info(f"Agent: {transcript}")
                         if self.channel == "browser":
@@ -209,6 +227,8 @@ class OpenAIRealtimeClient:
                     user_text = event.get('transcript', '').strip()
                     if user_text:
                         self.transcript_log.append({"role": "user", "text": user_text})
+                        if on_transcript:
+                            on_transcript(self.get_transcript(), self.get_usage())
                         print(f"DEBUG: [VOICE] USER: {user_text}")
                         logger.info(f"User: {user_text}")
                         if self.channel == "browser":
@@ -232,11 +252,11 @@ class OpenAIRealtimeClient:
                     if error_code == 'response_cancel_not_active':
                         logger.debug(f"[OPENAI] Non-critical: {error_data}")
                     else:
-                        logger.error(f"[OPENAI] Error event: {error_data}")
+                        logger.error('Realtime provider reported an error; details withheld.')
         except websockets.exceptions.ConnectionClosed:
             logger.info("OpenAI connection closed.")
         except Exception as e:
-            logger.exception(f"Error in OpenAI listener loop: {e}")
+            logger.error('Realtime connection failed; provider details withheld.')
 
     def get_transcript(self):
         return self.transcript_log

@@ -14,9 +14,10 @@ async def get_system_settings(db: AsyncSession = Depends(get_db)):
     
     if not db_setting:
         return {
-            "text_model": "gpt-4o-mini",
-            "realtime_llm_model": "gpt-realtime-2025-08-28",
-            "summary_model": "gpt-4o-mini",
+            "text_model": SystemSetting().ai_model('text'),
+            "realtime_llm_model": SystemSetting().ai_model('realtime'),
+            "summary_model": SystemSetting().ai_model('summary'),
+            "embedding_model": SystemSetting().ai_model('embedding'),
             "maintenance_mode": False,
             "maintenance_message": "We are currently undergoing maintenance. Please check back later.",
             "company_name": "BookyAI",
@@ -29,9 +30,10 @@ async def get_system_settings(db: AsyncSession = Depends(get_db)):
         }
         
     return {
-        "text_model": db_setting.text_model,
-        "realtime_llm_model": db_setting.realtime_llm_model,
-        "summary_model": db_setting.summary_model,
+        "text_model": db_setting.ai_model('text'),
+        "realtime_llm_model": db_setting.ai_model('realtime'),
+        "summary_model": db_setting.ai_model('summary'),
+        "embedding_model": db_setting.ai_model('embedding'),
         "maintenance_mode": db_setting.maintenance_mode,
         "maintenance_message": db_setting.maintenance_message,
         "company_name": db_setting.company_name,

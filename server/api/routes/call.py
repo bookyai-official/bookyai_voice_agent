@@ -13,6 +13,8 @@ from models.agent import AIAgent
 from schemas.call import CallRecordResponse
 from models.business import BusinessConfiguration, BlockedPhoneNumber
 from services.usage_service import UsageService
+from agents.factory import AgentFactory
+from services.realtime_provider import RealtimeProviderError
 
 router = APIRouter(prefix="/calls", tags=["Calls"])
 
@@ -118,6 +120,14 @@ async def handle_incoming_call(
             response.reject()
             return HTMLResponse(content=str(response), media_type="application/xml")
 
+        # Reject unavailable providers before answering or recording the call.
+        try:
+            await AgentFactory.get_voice_runtime_settings(agent.business_id, db)
+        except RealtimeProviderError:
+            response = VoiceResponse()
+            response.reject()
+            return HTMLResponse(content=str(response), media_type="application/xml")
+
     # ── 3. WebSocket URL and DB record ────────────────────────────────────
     # Replace HTTP/HTTPS with WSS for WebSocket URL
     ws_url = f"wss://{host}/ws/stream/{agent_id}?direction={direction}"
@@ -206,6 +216,12 @@ async def trigger_outbound_call(request: Request, payload: OutboundCallRequest, 
     has_usage = await UsageService.has_remaining_usage(db, agent.business_id, "minutes")
     if not has_usage:
         raise HTTPException(status_code=403, detail="Business has exceeded call minutes limit.")
+
+    # Validate the selected provider before placing a billable Twilio call.
+    try:
+        await AgentFactory.get_voice_runtime_settings(agent.business_id, db)
+    except RealtimeProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     host = request.headers.get("host")
     try:

@@ -17,6 +17,7 @@ from core.config import settings
 from models.agent import AIAgent
 from api.dependencies import verify_token
 from services.usage_service import UsageService
+from services.lifetime_runtime import RuntimeDenied
 from agents.base import BaseAgent
 from agents.tools import get_tools
 from langchain_core.messages import HumanMessage, AIMessage
@@ -44,7 +45,10 @@ async def agent_chat_test(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     # ── 1.5 Check Usage Limit ─────────────────────────────────────────────
-    has_usage = await UsageService.has_remaining_usage(db, agent_cfg.business_id, "sms")
+    try:
+        has_usage = await UsageService.has_remaining_usage(db, agent_cfg.business_id, "sms")
+    except RuntimeDenied as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
     if not has_usage:
         raise HTTPException(status_code=403, detail="Business has exceeded usage limit.")
 
@@ -83,6 +87,8 @@ async def agent_chat_test(
             "session_key": session_key
         }
 
+    except RuntimeDenied as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
     except Exception as exc:
         logger.error("[TEST CHAT] LangChain error: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))

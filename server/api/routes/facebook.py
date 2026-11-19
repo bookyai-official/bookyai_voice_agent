@@ -168,7 +168,7 @@ async def process_webhook_message(platform: str, business_platform_id: str, send
             response_text = await get_chat_response(
                 agent_id=agent.id,
                 chat_id=chat.id,
-                user_message=message_text,
+                feature=required_feature, user_message=message_text,
                 channel="text"
             )
         except Exception as e:

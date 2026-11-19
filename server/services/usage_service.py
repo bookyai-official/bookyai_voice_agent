@@ -3,6 +3,7 @@ from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from models.subscription import Subscription, UsageTracker, CreditBalance, SubscriptionPlan
 from datetime import datetime, timezone
+from services.lifetime_runtime import LifetimeRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,10 @@ class UsageService:
         """
         Checks if a business has access to a specific feature key based on their subscription plan.
         """
+        policy = await LifetimeRuntime.context(business_id)
+        if policy:
+            allowed = policy.get('allowed_features', [])
+            return not allowed or feature_key in allowed
         business_id = str(business_id)
         subscription, _ = await UsageService.get_active_usage_tracker(db, business_id)
         
@@ -75,6 +80,10 @@ class UsageService:
         """
         Checks if a business has remaining usage for the given type ('minutes' or 'sms').
         """
+        policy = await LifetimeRuntime.context(business_id)
+        if policy:
+            remaining = policy['remaining'].get(usage_type, 0)
+            return remaining is None or remaining > 0
         business_id = str(business_id)
 
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
@@ -122,6 +131,10 @@ class UsageService:
         Returns the number of remaining units (minutes or SMS) for a business.
         Returns a very large number if unlimited.
         """
+        policy = await LifetimeRuntime.context(business_id)
+        if policy:
+            remaining = policy['remaining'].get(usage_type, 0)
+            return 999999 if remaining is None else remaining
         business_id = str(business_id)
 
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
@@ -160,6 +173,9 @@ class UsageService:
         Increments usage for a business.
         Prioritizes the monthly allowance, then consumes from CreditBalance.
         """
+        if await LifetimeRuntime.context(business_id):
+            # LTD is reserved before provider work in the execution path, never charged twice here.
+            return
         business_id = str(business_id)
 
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)

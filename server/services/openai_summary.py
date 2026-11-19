@@ -8,19 +8,21 @@ from agents.llm_utils import get_llm
 from core.config import settings
 from core.database import AsyncSessionLocal
 from models.system import SystemSetting
+from services.lifetime_runtime import LifetimeRuntime
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-async def generate_call_summary(transcript: List[Dict[str, str]]) -> str:
+async def generate_call_summary(transcript: List[Dict[str, str]], business_id=None) -> str:
     """
     Generates a concise summary of the call transcript using LangChain and ChatOpenAI.
     """
     if not transcript:
         return "No transcript available for summary."
 
-    if not settings.OPENAI_API_KEY:
-        logger.error("OpenAI API Key is missing. Cannot generate summary.")
-        return "Summary generation failed: Missing API Key."
+    policy = await LifetimeRuntime.context(business_id, purpose='summary', feature='calling_agent') if business_id is not None else None
+    # The configured summary model selects its own credential in get_llm.
+    # Gemini summaries must not require a platform OpenAI key.
 
     # 1. Format transcript for the prompt
     formatted_transcript = ""
@@ -32,14 +34,20 @@ async def generate_call_summary(transcript: List[Dict[str, str]]) -> str:
     # 2. Fetch dynamic model configuration
     async with AsyncSessionLocal() as db_session:
         system_setting = await db_session.execute(select(SystemSetting))
-        system_setting = system_setting.scalar_one_or_none()
-        current_model = system_setting.summary_model if system_setting and system_setting.summary_model else "gpt-4o-mini"
+        system_setting = system_setting.scalar_one_or_none() or SystemSetting()
+        current_model = system_setting.ai_model('summary')
 
     # 3. Initialize LLM via utility (supports multiple providers)
+    if policy:
+        operation = f'summary:{uuid4().hex}'
+        await LifetimeRuntime.reserve(business_id, operation)
+        await LifetimeRuntime.settle(business_id, operation, 1)
+        formatted_transcript = formatted_transcript[:40000]
     chat_model = get_llm(
-        model_name=current_model,
+        model_name=policy['model'] if policy else current_model,
         temperature=0.5,
-        openai_api_key=settings.OPENAI_API_KEY,
+        openai_api_key=policy['api_key'] if policy else settings.OPENAI_API_KEY,
+        strict_credentials=bool(policy),
         gemini_api_key=system_setting.gemini_api_key if system_setting else None,
         grok_api_key=system_setting.grok_api_key if system_setting else None,
         deepseek_api_key=system_setting.deepseek_api_key if system_setting else None,
@@ -65,5 +73,8 @@ async def generate_call_summary(transcript: List[Dict[str, str]]) -> str:
         return response.content.strip()
 
     except Exception as e:
+        if policy:
+            logger.error('Lifetime summary generation failed; provider details withheld.')
+            return 'Summary unavailable. Check AI settings and usage allowance.'
         logger.error(f"Error generating call summary via LangChain: {e}")
         return f"Summary generation failed: {str(e)}"

@@ -1,17 +1,21 @@
+from services.lifetime_runtime import LifetimeRuntime
+import math
+import uuid
 import json
 import logging
 import asyncio
-import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from contextlib import suppress
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from core.database import AsyncSessionLocal
 from core.config import settings
 from models.agent import AIAgent
-from services.openai_realtime import OpenAIRealtimeClient
+from services.realtime_provider import RealtimeProviderError, create_realtime_client
 from agents.factory import AgentFactory
 from services.voice_service import VoiceService
+from services.call_transcript import CallTranscriptWriter
 
 logger = logging.getLogger(__name__)
 
@@ -44,15 +48,25 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
 
     # 3. Initialize Agent & Client
     web_call_sid = f"wc_{uuid.uuid4().hex[:16]}"
-    voice_agent = await AgentFactory.create_voice_agent(
-        agent_id=agent_id,
-        openai_api_key=settings.OPENAI_API_KEY
-    )
+    try:
+        voice_agent = await AgentFactory.create_voice_agent(
+            agent_id=agent_id,
+            openai_api_key=settings.OPENAI_API_KEY,
+            realtime_only=True,
+        )
+        realtime_client = create_realtime_client(agent=voice_agent, channel="browser")
+    except RealtimeProviderError as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close(code=1011)
+        return
 
-    openai_client = OpenAIRealtimeClient(
-        agent=voice_agent,
-        channel="browser"
-    )
+    lifetime_operation = None
+    lifetime_units = 0
+    if voice_agent.runtime_policy:
+        lifetime_operation = f'voice:{uuid.uuid4().hex}'
+        requested_minutes = min(10, agent_config.max_call_duration_minutes or 10)
+        lifetime_units = await LifetimeRuntime.reserve(agent_config.business_id, lifetime_operation, 'minutes', requested_minutes, partial=True)
+        remaining_seconds = min(remaining_seconds, lifetime_units * 60)
 
     # 4. Initialize CallRecord
     await VoiceService.create_call_record(
@@ -69,82 +83,121 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
     agent_max_seconds = (agent_config.max_call_duration_minutes or 10) * 60
     max_duration_seconds = min(agent_max_seconds, remaining_seconds)
 
+    transcript_writer = CallTranscriptWriter(web_call_sid)
+    provider_listener_task = None
+    browser_listener_task = None
+    session_connected = False
+    session_started_at = None
+    call_failed = False
     try:
-        await openai_client.connect()
-        logger.info("[WEB CALL] Connected to OpenAI Realtime.")
+        await realtime_client.connect()
+        logger.info("[WEB CALL] Connected to the selected realtime provider.")
 
-        # Greeting
-        if agent_config.greeting_message:
-            await openai_client.send_event({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": f"[System Trigger]: Greet the user by saying: '{agent_config.greeting_message}'"}]
-                }
-            })
-        await openai_client.send_event({"type": "response.create"})
+        await realtime_client.start_conversation(agent_config.greeting_message)
+        session_connected = True
+        session_started_at = asyncio.get_event_loop().time()
 
         await websocket.send_json({"type": "status", "status": "connected"})
 
-        # Spawn OpenAI -> Browser relay (unified in client.listen)
-        openai_listener_task = asyncio.create_task(
-            openai_client.listen(websocket, call_sid=web_call_sid)
+        # Spawn provider -> Browser relay (unified in client.listen)
+        provider_listener_task = asyncio.create_task(
+            realtime_client.listen(
+                websocket, call_sid=web_call_sid, on_transcript=transcript_writer.submit,
+            )
         )
 
-        # Browser -> OpenAI relay loop (transport layer)
-        async def _relay_browser_to_openai():
+        # Browser -> provider relay loop (transport layer)
+        async def _relay_browser_to_provider():
+            nonlocal call_failed
             try:
                 while True:
                     if (asyncio.get_event_loop().time() - connection_start_time) > max_duration_seconds:
                         break
                     
-                    message = await websocket.receive_text()
+                    try:
+                        message = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
                     data = json.loads(message)
                     msg_type = data.get("type")
 
                     if msg_type == "audio":
-                        await openai_client.send_audio(data["audio"])
+                        await realtime_client.send_audio(data["audio"])
                     elif msg_type == "stop":
                         break
             except WebSocketDisconnect:
                 pass
-            except Exception as e:
-                logger.error(f"[WEB CALL] Browser relay error: {e}")
+            except Exception:
+                call_failed = True
+                with suppress(WebSocketDisconnect, RuntimeError):
+                    await websocket.send_json({
+                        'type': 'error', 'message': 'Call audio could not be sent. Please start a new call.'
+                    })
 
-        browser_listener_task = asyncio.create_task(_relay_browser_to_openai())
+        browser_listener_task = asyncio.create_task(_relay_browser_to_provider())
 
-        done, pending = await asyncio.wait(
-            [openai_listener_task, browser_listener_task],
+        done, _ = await asyncio.wait(
+            [provider_listener_task, browser_listener_task],
             return_when=asyncio.FIRST_COMPLETED
         )
 
-        if openai_listener_task in done:
-            await websocket.send_json({"type": "session_end"})
-        else:
-            await asyncio.sleep(1.5)
-
-        call_end_time = asyncio.get_event_loop().time()
-        for task in pending:
-            task.cancel()
+        if provider_listener_task in done:
+            with suppress(WebSocketDisconnect, RuntimeError):
+                await websocket.send_json({"type": "session_end"})
 
     except Exception as e:
-        logger.error(f"[WEB CALL] Error: {e}", exc_info=True)
+        call_failed = True
+        logger.error('Web call failed; provider details withheld.' if lifetime_operation else f'[WEB CALL] Error: {e}', exc_info=not bool(lifetime_operation))
         try:
-            await websocket.send_json({"type": "error", "message": "An unexpected error occurred."})
+            message = str(e) if isinstance(e, RealtimeProviderError) else 'An unexpected error occurred.'
+            await websocket.send_json({"type": "error", "message": message})
         except:
             pass
     finally:
-        transcript = openai_client.get_transcript()
-        usage = openai_client.get_usage()
-        await openai_client.close()
+        call_end_time = asyncio.get_event_loop().time()
+        if browser_listener_task:
+            browser_listener_task.cancel()
+            await asyncio.gather(browser_listener_task, return_exceptions=True)
+        if provider_listener_task and not provider_listener_task.done():
+            finish_input = getattr(realtime_client, 'finish_input', None)
+            if finish_input:
+                with suppress(Exception):
+                    await asyncio.wait_for(finish_input(), timeout=3.5)
+            else:
+                await asyncio.sleep(1.0)
+        if provider_listener_task:
+            provider_listener_task.cancel()
+            await asyncio.gather(provider_listener_task, return_exceptions=True)
+        transcript = realtime_client.get_transcript()
+        usage = realtime_client.get_usage()
+        if transcript_writer:
+            transcript_writer.submit(transcript, usage)
+            with suppress(Exception):
+                await transcript_writer.close()
 
-        duration_seconds = int(call_end_time - connection_start_time)
-        await VoiceService.finalize_call(
-            call_sid=web_call_sid,
-            duration_seconds=duration_seconds,
-            transcript=transcript,
-            usage=usage,
-            business_id=agent_config.business_id
-        )
-        logger.info(f"[WEB CALL] Session ended for {web_call_sid}")
+        duration_seconds = int(call_end_time - session_started_at) if session_started_at else 0
+        finalization_task = None
+        if web_call_sid:
+            # Start persistence before SDK/socket cleanup; a disconnect cannot cancel it.
+            finalization_task = asyncio.create_task(VoiceService.finalize_call(
+                call_sid=web_call_sid, duration_seconds=duration_seconds,
+                transcript=transcript, usage=usage,
+                business_id=agent_config.business_id, precharged=bool(lifetime_operation),
+                failed=call_failed or not session_connected or getattr(realtime_client, 'failed', False),
+            ))
+        try:
+            with suppress(Exception):
+                await asyncio.wait_for(realtime_client.close(), timeout=5)
+            with suppress(WebSocketDisconnect, RuntimeError):
+                await websocket.close()
+            if lifetime_operation:
+                try:
+                    await LifetimeRuntime.settle(
+                        agent_config.business_id, lifetime_operation,
+                        min(lifetime_units, math.ceil(max(0, duration_seconds) / 60)),
+                    )
+                except Exception:
+                    print('[VOICE] Unable to settle lifetime voice reservation; reserved usage retained.', flush=True)
+        finally:
+            if finalization_task:
+                await asyncio.shield(finalization_task)

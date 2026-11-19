@@ -6,6 +6,8 @@ from core.database import AsyncSessionLocal
 from agents.factory import AgentFactory
 from models.conversation import Message
 from services.chat_service import save_message
+from services.lifetime_runtime import LifetimeRuntime, RuntimeDenied
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,8 @@ async def get_chat_response(
     chat_id: int,
     user_message: str,
     additional_context: str = "",
-    channel: str = "text"
+    channel: str = "text",
+    feature: str = 'webchat_agent',
 ) -> str:
     """
     Unified bridge service to get a response from a LangChain Agent.
@@ -54,6 +57,15 @@ async def get_chat_response(
             openai_api_key=settings.OPENAI_API_KEY
         )
     
+    policy = await LifetimeRuntime.context(agent.business_id, purpose='text', feature=feature) if agent.runtime_policy else None
+    if policy and (len(user_message) > 16000 or len(additional_context) > 8000):
+        raise RuntimeDenied('This message is too long. Please shorten it.')
+    operation = f'chat:{uuid4().hex}' if policy else None
+    if policy:
+        await LifetimeRuntime.reserve(agent.business_id, operation)
+        # Charge before execution. Ambiguous failures must not create free unlimited provider retries.
+        await LifetimeRuntime.settle(agent.business_id, operation, 1)
+
     # 2. Use chat_id as thread_id for persistence
     thread_id = str(chat_id)
     

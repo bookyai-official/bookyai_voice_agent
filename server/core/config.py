@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
+from pathlib import Path
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Booky Voice Agent"
@@ -14,6 +15,8 @@ class Settings(BaseSettings):
 
     # OpenAI Settings
     OPENAI_API_KEY: Optional[str] = None
+    BOOKY_BILLING_BASE_URL: str = ''
+    AI_RUNTIME_TOKEN: str = ''
 
     # Pinecone (RAG vector store)
     PINECONE_API_KEY: Optional[str] = None
@@ -50,6 +53,6 @@ class Settings(BaseSettings):
         
     ]
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=Path(__file__).resolve().parent.parent / ".env", env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()

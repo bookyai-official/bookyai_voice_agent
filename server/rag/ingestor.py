@@ -94,6 +94,17 @@ class KnowledgeIngestor:
                 # Save raw text to document.content
                 full_content = "\n\n".join(doc.page_content for doc in raw_docs)
                 new_chars_count = len(full_content)
+                from services.lifetime_runtime import LifetimeRuntime
+                policy = await LifetimeRuntime.context(kb.business_id, feature='custom_knowledge_base')
+                if policy:
+                    if new_chars_count > 200000:
+                        raise ValueError('Lifetime document ingestion is limited to 200,000 characters per document.')
+                    kb_limit = policy['limits'].get('kb_chars', 0)
+                    if kb_limit:
+                        other = await db.execute(select(KnowledgeDocument).join(KnowledgeBase).where(
+                            KnowledgeBase.business_id == kb.business_id, KnowledgeDocument.id != document_id))
+                        if sum(len(row.content or '') for row in other.scalars().all()) + new_chars_count > kb_limit:
+                            raise ValueError('This document exceeds your lifetime knowledge-base character limit.')
 
                 # Fetch active subscription and check KB character limit
                 stmt_sub = (
@@ -154,7 +165,7 @@ class KnowledgeIngestor:
                     raise ValueError("Splitting produced zero chunks.")
 
                 # ── 5. Get embedder and create PineconeVectorStore ────────
-                embedder = await EmbeddingProvider.get_embedder(db)
+                embedder = await EmbeddingProvider.get_embedder(db, business_id=kb.business_id)
                 namespace = str(kb.business_id)
 
                 pinecone_mgr = PineconeClientManager()
@@ -196,10 +207,11 @@ class KnowledgeIngestor:
 
             except Exception as e:
                 # ── Failure path — update DB and log full traceback ────────
-                error_msg = f"{type(e).__name__}: {e}"
+                private = bool(locals().get('policy'))
+                error_msg = 'Knowledge processing failed. Check API key permissions, document size, and usage allowance.' if private else f'{type(e).__name__}: {e}'
                 logger.error(
                     "[INGESTOR] ✗ Ingestion failed for document %d: %s\n%s",
-                    document_id, error_msg, traceback.format_exc(),
+                    document_id, error_msg, '' if private else traceback.format_exc(),
                 )
                 await cls._mark_failed(db, document_id, job_id, error_msg)
 

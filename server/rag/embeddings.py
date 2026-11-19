@@ -37,8 +37,6 @@ logger = logging.getLogger(__name__)
 SUPPORTED_PROVIDERS = ("openai", "gemini")
 
 DEFAULT_PROVIDER = "openai"
-DEFAULT_OPENAI_MODEL = "text-embedding-3-large"
-DEFAULT_GEMINI_MODEL = "models/gemini-embedding-2"
 
 # Unified dimension: both providers output this size so a single
 # Pinecone index (dimension=768) works for either provider.
@@ -78,7 +76,7 @@ class EmbeddingProvider:
     _cache: Dict[Tuple[str, str], Embeddings] = {}
 
     @classmethod
-    async def get_embedder(cls, db: AsyncSession) -> Embeddings:
+    async def get_embedder(cls, db: AsyncSession, business_id=None) -> Embeddings:
         """
         Read the embedding provider and model name from SystemSetting,
         then return the matching LangChain Embeddings instance.
@@ -92,9 +90,20 @@ class EmbeddingProvider:
         Raises:
             ValueError: If the configured provider is not supported.
         """
+        from services.lifetime_runtime import LifetimeRuntime, RuntimeDenied
+        from uuid import uuid4
+        if business_id is None:
+            raise RuntimeDenied('Embedding operations require a business context.')
+        policy = await LifetimeRuntime.context(business_id, purpose='embedding', feature='custom_knowledge_base')
+        if policy:
+            operation = f'embedding:{uuid4().hex}'
+            await LifetimeRuntime.reserve(business_id, operation)
+            await LifetimeRuntime.settle(business_id, operation, 1)
+            # Tenant clients never enter the global provider/model cache, including after key rotation.
+            return cls._create_embedder('openai', policy['model'], policy['api_key'])
         # 1. Read SystemSetting (singleton row)
         result = await db.execute(select(SystemSetting).limit(1))
-        sys_settings = result.scalar_one_or_none()
+        sys_settings = result.scalar_one_or_none() or SystemSetting()
 
         # 2. Resolve provider, model, and API key with safe defaults.
         #    Uses getattr so this works both before and after the
@@ -102,13 +111,11 @@ class EmbeddingProvider:
         provider = (
             getattr(sys_settings, "embedding_provider", None) or DEFAULT_PROVIDER
         ).lower()
-        model_name = getattr(sys_settings, "embedding_model", None)
+        model_name = sys_settings.ai_model('embedding')
 
         if provider == "openai":
-            model_name = model_name or DEFAULT_OPENAI_MODEL
             api_key = getattr(sys_settings, "openai_api_key", None) if sys_settings else None
         elif provider == "gemini":
-            model_name = model_name or DEFAULT_GEMINI_MODEL
             api_key = getattr(sys_settings, "gemini_api_key", None) if sys_settings else None
         else:
             raise ValueError(

@@ -16,7 +16,7 @@ class SystemSetting(Base):
 
     # RAG embedding configuration
     embedding_provider = Column(String(20), default='openai')    # "openai" or "gemini"
-    embedding_model = Column(String(100), nullable=True)         # e.g. "text-embedding-3-large"
+    embedding_model = Column(String(100), default='text-embedding-3-large', nullable=True)         # e.g. "text-embedding-3-large"
     
     maintenance_mode = Column(Boolean, default=False)
     maintenance_message = Column(Text, nullable=True)
@@ -30,3 +30,15 @@ class SystemSetting(Base):
     linkedin_link = Column(String(200), nullable=True)
     
     updated_at = Column(DateTime)
+
+    AI_MODEL_FIELDS = {
+        'text': 'text_model', 'realtime': 'realtime_llm_model', 'summary': 'summary_model',
+        'embedding': 'embedding_model',
+    }
+
+    def ai_model(self, purpose):
+        field = self.AI_MODEL_FIELDS[purpose]
+        value = getattr(self, field, None)
+        if not value:
+            value = getattr(type(self), field).property.columns[0].default.arg
+        return str(value).strip()

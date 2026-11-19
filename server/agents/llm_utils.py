@@ -12,7 +12,9 @@ def get_llm(model_name: str, temperature: float = 0.7, **kwargs) -> Any:
     """
     
     # Extract API keys from kwargs or settings
-    openai_key = kwargs.get("openai_api_key") or settings.OPENAI_API_KEY
+    if kwargs.get('strict_credentials') and not kwargs.get('openai_api_key'):
+        raise ValueError('A resolved customer credential is required')
+    openai_key = kwargs.get("openai_api_key") if kwargs.get('strict_credentials') else (kwargs.get("openai_api_key") or settings.OPENAI_API_KEY)
     gemini_key = kwargs.get("gemini_api_key")
     grok_key = kwargs.get("grok_api_key")
     deepseek_key = kwargs.get("deepseek_api_key")
@@ -53,5 +55,6 @@ def get_llm(model_name: str, temperature: float = 0.7, **kwargs) -> Any:
     return ChatOpenAI(
         model=model_name,
         temperature=temperature,
-        openai_api_key=openai_key
+        openai_api_key=openai_key,
+        **({'max_tokens': kwargs['max_tokens']} if kwargs.get('max_tokens') else {}),
     )

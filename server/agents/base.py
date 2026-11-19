@@ -1,4 +1,6 @@
 import logging
+import re
+import traceback
 import datetime
 import warnings
 from typing import List, Any, Dict, Optional, TYPE_CHECKING
@@ -64,6 +66,14 @@ class BaseAgent:
         self.business_id = business_id
         self._retriever = retriever
         
+        # Live transports use prompts and tools directly, without a text-model client.
+        if kwargs.pop('realtime_only', False):
+            self.base_prompt_text = system_prompt
+            self.llm = None
+            self.agent = None
+            self.checkpointer = None
+            return
+
         # 1. Initialize LLM using the utility (supports multiple providers)
         self.llm = get_llm(
             model_name=model_name,
@@ -100,6 +110,36 @@ class BaseAgent:
         """Standard interface for getting a response."""
         return await self.run(user_input, thread_id, additional_context, history)
 
+    def _print_execution_error(self, error: Exception, thread_id: str) -> None:
+        """Print server-side error details and chained traceback with credentials redacted."""
+        policy = getattr(self, 'runtime_policy', None) or {}
+        details = (
+            f"[BASE AGENT] Lifetime AI execution failed "
+            f"(business={self.business_id}, thread={thread_id}, "
+            f"channel={self.channel}, model={self.model_name}, "
+            f"funding={policy.get('funding', 'unknown')}, "
+            f"exception={type(error).__name__}, "
+            f"status={getattr(error, 'status_code', None)}, "
+            f"code={getattr(error, 'code', None)}, "
+            f"request_id={getattr(error, 'request_id', None)}).\n"
+        )
+        # Format the exception chain without collecting stack-frame locals.
+        details += ''.join(traceback.format_exception(type(error), error, error.__traceback__))
+        for secret in (policy.get('api_key'), getattr(self, 'resolved_api_key', None)):
+            if isinstance(secret, str) and secret:
+                details = details.replace(secret, '[REDACTED]')
+        # Authentication errors can echo a masked key as well as the full key.
+        details = re.sub(r"\bsk-[A-Za-z0-9_.*-]+", '[REDACTED]', details)
+        details = re.sub(
+            r"(?i)\bBearer\s+[A-Za-z0-9._~+/*=-]+", 'Bearer [REDACTED]', details,
+        )
+        details = re.sub(
+            r"(?i)(\b(?:api[_-]?key|authorization|x-token|access[_-]?token)\b[\"']?"
+            r"\s*[:=]\s*[\"']?)(?:Bearer\s+)?[^\s,\"'}]+",
+            r"\1[REDACTED]", details,
+        )
+        print(details, flush=True)
+
     async def run(self, user_input: str, thread_id: str, additional_context: str = "", history: List[Any] = None) -> str:
         """
         Execute the agent loop with a user message and DB-provided history.
@@ -112,12 +152,14 @@ class BaseAgent:
         # Convert DB history to LangChain messages
         lc_history = []
         if history:
+            if getattr(self, 'runtime_policy', None):
+                history = history[-10:]
             from langchain_core.messages import HumanMessage, AIMessage
             for msg in history:
                 if msg.role == "user":
-                    lc_history.append(HumanMessage(content=msg.content))
+                    lc_history.append(HumanMessage(content=msg.content[:4000] if getattr(self, 'runtime_policy', None) else msg.content))
                 elif msg.role == "assistant":
-                    lc_history.append(AIMessage(content=msg.content))
+                    lc_history.append(AIMessage(content=msg.content[:4000] if getattr(self, 'runtime_policy', None) else msg.content))
 
         try:
             # Prepare input: System prompt is already in the agent, 
@@ -126,7 +168,7 @@ class BaseAgent:
             
             config = {
                 "configurable": {"thread_id": thread_id},
-                "recursion_limit": 25,
+                "recursion_limit": 8 if getattr(self, 'runtime_policy', None) else 25,
             }
             
             # Execute agent
@@ -140,6 +182,9 @@ class BaseAgent:
             return "I'm sorry, I couldn't generate a response."
         
         except Exception as e:
+            if getattr(self, 'runtime_policy', None):
+                self._print_execution_error(e, thread_id)
+                return 'AI is temporarily unavailable. Please contact the business directly.'
             error_str = str(e)
             # Handle loop detection errors gracefully
             if "looping" in error_str.lower() or "loop detection" in error_str.lower():
