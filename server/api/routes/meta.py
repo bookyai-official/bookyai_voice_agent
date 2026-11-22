@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import re
 from datetime import timedelta
 
@@ -17,6 +18,7 @@ from services.meta_security import MetaSecurityError, digest, encrypt_payload, u
 
 
 router = APIRouter(tags=['Meta messaging'])
+logger = logging.getLogger(__name__)
 MAX_BODY_BYTES = 1024 * 1024
 
 
@@ -78,6 +80,8 @@ async def persist_events(payload, expected_channel=None):
     # Fully validate before writing so malformed batches cannot be partly accepted.
     events = list(normalized_events(payload, expected_channel))
     app_id = settings.FB_APP_ID
+    queued_ids = []
+    skipped = 0
     async with AsyncSessionLocal() as db:
         async with db.begin():
             for channel, account_id, sender, mid, content in events:
@@ -87,12 +91,20 @@ async def persist_events(payload, expected_channel=None):
                     model.status == 'connected',
                 ).with_for_update())).scalar_one_or_none()
                 if not integration:
+                    logger.warning(
+                        'Meta webhook skipped: no connected integration matches channel=%s app_id=%s account_id=%s. Check the app ID, linked account, connection status and shared database.',
+                        channel, app_id, account_id,
+                    )
+                    skipped += 1
                     continue
                 if any(value and utc(value) <= now() for value in (integration.token_expires_at, integration.data_access_expires_at)):
                     integration.status, integration.last_error_code = 'reauth_required', 'token_expired'
+                    logger.warning('Meta webhook skipped: credentials expired channel=%s integration_id=%s.', channel, integration.id)
+                    skipped += 1
                     continue
                 event_key = digest([app_id, channel, account_id, sender, mid, 'message'])
                 if (await db.execute(select(MetaWebhookEvent.id).where(MetaWebhookEvent.event_key == event_key))).first():
+                    skipped += 1
                     continue
                 item = MetaWebhookEvent(
                     event_key=event_key, conversation_key=digest([app_id, channel, account_id, sender]),
@@ -105,10 +117,14 @@ async def persist_events(payload, expected_channel=None):
                         db.add(item)
                         await db.flush()
                 except IntegrityError:
+                    skipped += 1
                     continue  # Another ingress worker already accepted the event.
+                queued_ids.append(item.id)
                 integration.last_received_at = now()
                 integration.webhook_status = 'subscribed'
                 integration.updated_at = now()
+    # Log acceptance only after the transaction commits successfully.
+    logger.info('Meta webhook committed: messages=%s queued=%s skipped=%s event_ids=%s.', len(events), len(queued_ids), skipped, queued_ids)
 
 
 async def verification(request):
@@ -127,6 +143,7 @@ async def verification(request):
 
 async def receive(request, expected_channel=None):
     if not settings.FB_APP_ID or not settings.FB_APP_SECRET:
+        logger.error('Meta webhook rejected: configure FB_APP_ID and FB_APP_SECRET on the agents backend.')
         return Response('Webhook authentication is not configured.', status_code=503)
     body = bytearray()
     async for chunk in request.stream():
@@ -140,7 +157,11 @@ async def receive(request, expected_channel=None):
         await persist_events(payload, expected_channel)
     except (ValueError, TypeError, KeyError, AttributeError):
         return Response('Invalid webhook payload.', status_code=400)
-    except (SQLAlchemyError, MetaSecurityError):
+    except (SQLAlchemyError, MetaSecurityError) as exc:
+        logger.error(
+            'Meta webhook persistence failed: error_type=%s sqlstate=%s. Event not acknowledged.',
+            type(exc).__name__, getattr(getattr(exc, 'orig', None), 'sqlstate', None),
+        )
         # Acknowledge only after durable commit; Meta can retry a failed write.
         return Response('Unable to accept event. Please retry.', status_code=503)
     return Response('EVENT_RECEIVED', media_type='text/plain')

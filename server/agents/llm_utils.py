@@ -51,10 +51,19 @@ def get_llm(model_name: str, temperature: float = 0.7, **kwargs) -> Any:
             temperature=temperature
         )
 
-    # 4. Default to OpenAI
+    # 4. OpenAI: Responses supports reasoning and function tools together.
+    # Let reasoning models use their default sampling settings instead of
+    # sending the agent's custom temperature, which some models reject.
+    reasoning_model = model_lower.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4"))
     return ChatOpenAI(
         model=model_name,
-        temperature=temperature,
+        temperature=None if reasoning_model else temperature,
         openai_api_key=openai_key,
+        use_responses_api=True,
+        output_version="responses/v1",
+        # History is managed by our database. Carry encrypted reasoning between
+        # tool calls within a run without requiring stored provider responses.
+        store=False,
+        include=["reasoning.encrypted_content"],
         **({'max_tokens': kwargs['max_tokens']} if kwargs.get('max_tokens') else {}),
     )

@@ -24,7 +24,7 @@ from services.meta_graph import send_message
 from services.meta_security import MetaSecurityError, decrypt, encrypt, utc
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('workers.meta_messages')
 LEASE_SECONDS = 180
 MAX_ATTEMPTS = 5
 UNFINISHED = ('pending', 'processing', 'generating', 'prepared', 'sending', 'delivered')
@@ -143,6 +143,7 @@ async def finish(event_id, owner, status, code=''):
             event.status, event.last_error_code = status, code
             event.encrypted_payload, event.encrypted_reply = '', ''
             event.lease_owner, event.lease_until, event.updated_at = '', None, now()
+    logger.info('Meta event %s finished: status=%s reason=%s.', event_id, status, code or 'none')
 
 
 async def retry(event_id, owner, code, delay=30):
@@ -157,6 +158,7 @@ async def retry(event_id, owner, code, delay=30):
                 event.available_at = now() + timedelta(seconds=min(3600, max(delay, 2 ** event.attempts)) + random.uniform(0, 3))
             event.last_error_code, event.updated_at = code, now()
             event.lease_owner, event.lease_until = '', None
+    logger.warning('Meta event %s retry decision: status=%s reason=%s attempts=%s.', event_id, event.status, code, event.attempts)
 
 
 async def prepare_inbound(event_id, owner):
@@ -268,6 +270,7 @@ async def finalize_delivery(event_id, owner):
             event.usage_charged, event.status = True, 'completed'
             event.encrypted_payload, event.encrypted_reply = '', ''
             event.lease_owner, event.lease_until, event.updated_at = '', None, now()
+    logger.info('Meta event %s completed: reply delivered and saved.', event_id)
 
 
 async def process(event_id, owner):
@@ -306,6 +309,7 @@ async def process(event_id, owner):
             return
         billing = {}
         try:
+            logger.info('Meta event %s generating reply: channel=%s agent_id=%s.', event_id, event.channel, agent.id)
             from services.langchain_service import get_chat_response
             response = await get_chat_response(
                 agent_id=agent.id, chat_id=event.chat_id, user_message=user_text,
@@ -317,7 +321,8 @@ async def process(event_id, owner):
                 raise ValueError()
             if len(response) > 1000:
                 response = response[:997] + '...'
-        except Exception:
+        except Exception as exc:
+            logger.error('Meta event %s generation failed: error_type=%s.', event_id, type(exc).__name__)
             # Agent tools may already have acted; do not repeat generation.
             await finish(event_id, owner, 'failed', 'generation_failed')
             return
@@ -335,10 +340,12 @@ async def process(event_id, owner):
             if not record or not chat or not chat.enable_ai or not response_window_open(current):
                 current.status, current.last_error_code = 'cancelled', 'connection_or_chat_disabled'
                 current.encrypted_payload, current.encrypted_reply = '', ''
+                logger.info('Meta event %s cancelled before sending: connection or chat disabled, or messaging window expired.', event_id)
                 return
             token, reply = decrypt(record.encrypted_token), decrypt(current.encrypted_reply)
             current.status, current.updated_at = 'sending', now()
     outcome = await send_message(event.channel, event.account_id, token, event.sender_id, reply)
+    logger.info('Meta event %s send outcome: status=%s code=%s.', event_id, outcome.status, outcome.code or 'none')
     if outcome.status == 'sent':
         async with AsyncSessionLocal() as db:
             async with db.begin():
@@ -361,17 +368,18 @@ async def process(event_id, owner):
 
 async def run_claim(claimed):
     event_id, owner, key = claimed
+    logger.info('Meta event %s claimed by worker.', event_id)
     task = asyncio.create_task(heartbeat(event_id, owner, key))
     try:
         await process(event_id, owner)
     except LeaseLost:
-        pass
-    except (SQLAlchemyError, MetaSecurityError):
-        logger.warning('Meta event %s stopped after a storage/credential error; lease recovery will classify its stage.', event_id)
-    except Exception:
+        logger.warning('Meta event %s stopped: worker lease lost.', event_id)
+    except (SQLAlchemyError, MetaSecurityError) as exc:
+        logger.warning('Meta event %s stopped after a storage/credential error: error_type=%s sqlstate=%s; lease recovery will classify its stage.', event_id, type(exc).__name__, getattr(getattr(exc, 'orig', None), 'sqlstate', None))
+    except Exception as exc:
         # No exception strings or payloads: provider/library errors can contain
         # tokens or customer content. The event ID is sufficient for diagnosis.
-        logger.error('Meta event %s failed before completion.', event_id)
+        logger.error('Meta event %s failed before completion: error_type=%s.', event_id, type(exc).__name__)
         with contextlib.suppress(LeaseLost, SQLAlchemyError):
             await finish(event_id, owner, 'failed', 'processing_failed')
     finally:
@@ -405,14 +413,17 @@ async def serve():
                         await asyncio.wait_for(stop.wait(), timeout=1)
                     except asyncio.TimeoutError:
                         pass
-            except SQLAlchemyError:
-                logger.warning('Meta worker database is unavailable; retrying.')
+            except SQLAlchemyError as exc:
+                logger.warning('Meta worker database operation failed: error_type=%s sqlstate=%s; retrying.', type(exc).__name__, getattr(getattr(exc, 'orig', None), 'sqlstate', None))
                 await asyncio.sleep(2)
     if engine.dialect.name != 'postgresql':
         raise RuntimeError('The production Meta worker requires PostgreSQL for cross-process claims and quota locks.')
+    concurrency = max(1, min(settings.META_WORKER_CONCURRENCY, 32))
+    logger.info('Meta messaging worker started: consumers=%s. Polling the database queue.', concurrency)
     try:
-        await asyncio.gather(*(consumer() for _ in range(max(1, min(settings.META_WORKER_CONCURRENCY, 32)))))
+        await asyncio.gather(*(consumer() for _ in range(concurrency)))
     finally:
+        logger.info('Meta messaging worker stopping.')
         await engine.dispose()
 
 
