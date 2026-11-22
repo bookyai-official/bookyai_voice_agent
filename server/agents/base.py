@@ -174,10 +174,12 @@ class BaseAgent:
             # Execute agent
             result = await self.agent.ainvoke(input_data, config=config)
             
-            # Extract last message from result
+            # Extract text from the last message. Model content may be a list
+            # of blocks; downstream channels and message storage expect a string.
             if "messages" in result and len(result["messages"]) > 0:
-                response = result["messages"][-1].content
-                return response
+                response = str(result["messages"][-1].text)
+                if response.strip():
+                    return response
             
             return "I'm sorry, I couldn't generate a response."
         
