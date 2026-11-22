@@ -24,6 +24,9 @@ async def get_or_create_chat(
     fb_psid: str | None = None,
     ig_sid: str | None = None,
     wa_id: str | None = None,
+    meta_app_id: str = '',
+    meta_account_id: str = '',
+    meta_identity_kind: str = '',
 ) -> Chat:
     """
     Find an existing Chat or create a new one.
@@ -37,6 +40,10 @@ async def get_or_create_chat(
     """
     # Ensure business_id is a string to match PostgreSQL VARCHAR column
     business_id = str(business_id)
+    if fb_psid or ig_sid:
+        expected_kind = 'messenger_page' if fb_psid else 'instagram_unified'
+        if not meta_app_id or not meta_account_id or meta_identity_kind != expected_kind or (fb_psid and ig_sid):
+            raise ChatServiceError('Meta conversations require app, recipient account, and channel identity.')
 
     async with AsyncSessionLocal() as db:
 
@@ -47,9 +54,11 @@ async def get_or_create_chat(
         elif session_key:
             query = query.where(Chat.session_key == session_key)
         elif fb_psid:
-            query = query.where(Chat.fb_psid == fb_psid)
+            query = query.where(Chat.fb_psid == fb_psid, Chat.meta_app_id == meta_app_id,
+                                Chat.meta_account_id == meta_account_id, Chat.meta_identity_kind == meta_identity_kind)
         elif ig_sid:
-            query = query.where(Chat.ig_sid == ig_sid)
+            query = query.where(Chat.ig_sid == ig_sid, Chat.meta_app_id == meta_app_id,
+                                Chat.meta_account_id == meta_account_id, Chat.meta_identity_kind == meta_identity_kind)
         elif wa_id:
             query = query.where(Chat.wa_id == wa_id)
         else:
@@ -69,6 +78,7 @@ async def get_or_create_chat(
             fb_psid=fb_psid,
             ig_sid=ig_sid,
             wa_id=wa_id,
+            meta_app_id=meta_app_id, meta_account_id=meta_account_id, meta_identity_kind=meta_identity_kind,
         )
         db.add(chat)
         await db.commit()

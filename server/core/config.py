@@ -26,7 +26,13 @@ class Settings(BaseSettings):
     API_SECRET_TOKEN: str
 
     # Facebook Settings
-    FB_VERIFY_TOKEN: Optional[str] = "admin"
+    FB_VERIFY_TOKEN: str = ''
+    FB_APP_ID: str = ''
+    FB_APP_SECRET: str = ''
+    META_WEBHOOK_VERIFY_TOKEN: str = ''
+    META_GRAPH_API_VERSION: str = 'v27.0'
+    META_CREDENTIAL_ENCRYPTION_KEYS: str = ''
+    META_WORKER_CONCURRENCY: int = 4
 
     # CORS settings
     ALLOWED_ORIGINS: list[str] = [

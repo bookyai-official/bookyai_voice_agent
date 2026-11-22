@@ -26,6 +26,10 @@ class OriginRestrictionMiddleware(BaseHTTPMiddleware):
     """
     async def dispatch(self, request: Request, call_next):
         # Skip check for certain paths if needed (e.g. docs)
+        # Meta authenticates these server-to-server callbacks with a verify
+        # token or a raw-body signature in the route, never browser headers.
+        if request.url.path in ("/api/messenger/webhook", "/api/instagram/webhook", "/api/facebook/webhook"):
+            return await call_next(request)
         if request.url.path in ["/docs", "/redoc", "/openapi.json"]:
             return await call_next(request)
 

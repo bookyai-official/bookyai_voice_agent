@@ -7,7 +7,7 @@ Message: Individual messages within a chat (user, assistant, system).
 
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, DateTime, JSON,
-    ForeignKey, UniqueConstraint, Index,
+    ForeignKey, UniqueConstraint, Index, text,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
@@ -30,6 +30,9 @@ class Chat(Base):
     enable_ai = Column(Boolean, default=True)
     fb_psid = Column(String(100), nullable=True, index=True)
     ig_sid = Column(String(100), nullable=True, index=True)
+    meta_app_id = Column(String(255), nullable=False, default='')
+    meta_account_id = Column(String(255), nullable=False, default='')
+    meta_identity_kind = Column(String(24), nullable=False, default='')
     wa_id = Column(String(100), nullable=True, index=True)
 
     messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan", order_by="Message.created_at")
@@ -37,9 +40,13 @@ class Chat(Base):
     __table_args__ = (
         UniqueConstraint("business_id", "phone_number", name="uq_chat_business_phone"),
         UniqueConstraint("business_id", "session_key", name="uq_chat_business_session"),
-        UniqueConstraint("business_id", "fb_psid", name="uq_chat_business_fb"),
-        UniqueConstraint("business_id", "ig_sid", name="uq_chat_business_ig"),
         UniqueConstraint("business_id", "wa_id", name="uq_chat_business_wa"),
+        Index('meta_chat_messenger_active_unique', 'business_id', 'meta_app_id', 'meta_account_id', 'meta_identity_kind', 'fb_psid', unique=True,
+              postgresql_where=text("is_active AND fb_psid IS NOT NULL AND fb_psid != ''"),
+              sqlite_where=text("is_active AND fb_psid IS NOT NULL AND fb_psid != ''")),
+        Index('meta_chat_instagram_active_unique', 'business_id', 'meta_app_id', 'meta_account_id', 'meta_identity_kind', 'ig_sid', unique=True,
+              postgresql_where=text("is_active AND ig_sid IS NOT NULL AND ig_sid != ''"),
+              sqlite_where=text("is_active AND ig_sid IS NOT NULL AND ig_sid != ''")),
     )
 
 
@@ -50,6 +57,7 @@ class Message(Base):
     chat_id = Column(Integer, ForeignKey("ai_agent_chat.id", ondelete="CASCADE"), nullable=False)
     role = Column(String(10), nullable=False, index=True)  # user, assistant, system
     content = Column(Text, nullable=False)
+    attachments = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     tool_calls = Column(JSON, default=list, nullable=True)
     tool_call_id = Column(String(100), nullable=True)
