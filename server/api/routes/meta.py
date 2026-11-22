@@ -131,7 +131,7 @@ async def verification(request):
     token = settings.META_WEBHOOK_VERIFY_TOKEN or settings.FB_VERIFY_TOKEN
     query = request.query_params
     supplied = query.get('hub.verify_token', '')
-    if not token or len(token) < 32:
+    if not token:
         return Response('Webhook verification is not configured.', status_code=503)
     if query.get('hub.mode') != 'subscribe' or not hmac.compare_digest(supplied, token):
         return Response('Verification failed.', status_code=403)

@@ -102,7 +102,13 @@ class MetaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         response=await self.client.get('/api/instagram/webhook',params={'hub.mode':'subscribe','hub.verify_token':'v'*40,'hub.challenge':'challenge'})
         self.assertEqual((response.status_code,response.text),(200,'challenge'))
         self.assertEqual((await self.client.get('/api/instagram/webhook',params={'hub.mode':'subscribe','hub.verify_token':'admin'})).status_code,403)
-        with patch.object(ingress,'settings',SimpleNamespace(META_WEBHOOK_VERIFY_TOKEN='',FB_VERIFY_TOKEN='admin')):
+        for primary, fallback in [('short-token', ''), ('', 'short-token')]:
+            with self.subTest(primary=bool(primary)), patch.object(ingress,'settings',SimpleNamespace(META_WEBHOOK_VERIFY_TOKEN=primary,FB_VERIFY_TOKEN=fallback)):
+                response=await self.client.get('/api/instagram/webhook',params={'hub.mode':'subscribe','hub.verify_token':'short-token','hub.challenge':'challenge'})
+                self.assertEqual((response.status_code,response.text),(200,'challenge'))
+                response=await self.client.get('/api/instagram/webhook',params={'hub.mode':'subscribe','hub.verify_token':'wrong-token','hub.challenge':'challenge'})
+                self.assertEqual(response.status_code,403)
+        with patch.object(ingress,'settings',SimpleNamespace(META_WEBHOOK_VERIFY_TOKEN='',FB_VERIFY_TOKEN='')):
             self.assertEqual((await self.client.get('/api/instagram/webhook')).status_code,503)
 
     async def test_unsigned_wrong_channel_and_malformed_rejected(self):
