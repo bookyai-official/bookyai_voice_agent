@@ -65,6 +65,9 @@ class BaseAgent:
         self.model_name = model_name
         self.business_id = business_id
         self._retriever = retriever
+        if any(tool.name == 'get_service_location_options' for tool in tools):
+            from agents.location import LOCATION_AGENT_RULES
+            system_prompt += '\n\n' + LOCATION_AGENT_RULES
         
         # Live transports use prompts and tools directly, without a text-model client.
         if kwargs.pop('realtime_only', False):

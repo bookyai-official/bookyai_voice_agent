@@ -1,5 +1,7 @@
 import logging
 from typing import List, Optional, Any
+from types import SimpleNamespace
+from urllib.parse import urlsplit, urlunsplit
 from langchain_core.tools import BaseTool
 from agents.tools.internal import create_internal_tools
 from agents.tools.factory import ToolFactory
@@ -9,7 +11,8 @@ logger = logging.getLogger(__name__)
 def get_tools(
     agent_config: Any, 
     twilio_client: Optional[Any] = None, 
-    call_sid: Optional[str] = None
+    call_sid: Optional[str] = None,
+    client_timezone: Optional[str] = None
 ) -> List[BaseTool]:
     """
     Assembles the full list of tools (internal + external) for an agent.
@@ -42,10 +45,28 @@ def get_tools(
                     continue # Already added via internal_tools
                 
                 # Build dynamic external tool
-                ext_tool = ToolFactory.create_external_tool(t_config)
+                ext_tool = ToolFactory.create_external_tool(
+                    t_config, operation_scope=f'{business_id}:{call_sid}' if call_sid else None,
+                    client_timezone=client_timezone,
+                )
                 tools.append(ext_tool)
                 
             except Exception as e:
                 logger.error(f"Failed to load tool {t_config.name} for agent {agent_config.id}: {e}")
 
+    # Existing saved agents receive the live options tool without a destructive reset.
+    if not any(tool.name == 'get_service_location_options' for tool in tools):
+        booking = next((config for config in getattr(agent_config, 'tools', [])
+                        if config.name == 'bookAppointment' and
+                        urlsplit(config.url or '').path.rstrip('/') == '/bookings/api/create-booking'), None)
+        if booking:
+            parsed = urlsplit(booking.url)
+            config = SimpleNamespace(name='get_service_location_options',
+                description='Get the single fixed location type, business premises, address requirements, and meeting-link delivery for a service. Call before collecting location details or scheduling.',
+                url=urlunsplit((parsed.scheme, parsed.netloc, '/bookings/api/service-location-options/', '', '')),
+                method='POST', timeout_seconds=5,
+                json_schema={'type': 'object', 'properties': {
+                    'service_id': {'type': 'string'}, 'business_id': {'type': 'string'}},
+                    'required': ['service_id', 'business_id']})
+            tools.append(ToolFactory.create_external_tool(config))
     return tools

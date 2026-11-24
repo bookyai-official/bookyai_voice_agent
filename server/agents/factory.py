@@ -106,6 +106,7 @@ class AgentFactory:
         twilio_client: Optional[Any] = None,
         call_sid: Optional[str] = None,
         realtime_only: bool = False,
+        client_timezone: Optional[str] = None,
     ) -> VoiceAgent:
         """
         Loads agent configuration from DB and returns a configured VoiceAgent.
@@ -130,13 +131,18 @@ class AgentFactory:
                 openai_api_key, realtime_model = policy['api_key'], policy['model']
 
             # 3. Get Tools
-            tools = get_tools(agent_config, twilio_client, call_sid)
+            tools = get_tools(agent_config, twilio_client, call_sid, client_timezone=client_timezone)
+            prompt = agent_config.get_compiled_prompt()
+            if client_timezone:
+                prompt += (f"\nClient timezone from browser metadata: {client_timezone}. "
+                           "Interpret requested times in this timezone automatically and state it when confirming; "
+                           "never ask the client to select a timezone.")
 
             # 4. Instantiate VoiceAgent with RAG retriever
             instance = VoiceAgent(
                 model_name=realtime_model,
                 openai_api_key=openai_api_key,
-                system_prompt=agent_config.get_compiled_prompt(),
+                system_prompt=prompt,
                 tools=tools,
                 temperature=agent_config.temperature or 0.8,
                 voice=resolve_realtime_voice(realtime_model, agent_config.voice),

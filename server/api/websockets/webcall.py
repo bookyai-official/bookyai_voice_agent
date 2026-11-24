@@ -4,6 +4,7 @@ import uuid
 import json
 import logging
 import asyncio
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from contextlib import suppress
 from sqlalchemy.future import select
@@ -29,6 +30,17 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
     """
     await websocket.accept()
     logger.info(f"[WEB CALL] New connection for Agent {agent_id}")
+    client_timezone = websocket.query_params.get('client_timezone') or None
+    if client_timezone:
+        try:
+            if len(client_timezone) > 64:
+                raise ValueError('Invalid client timezone')
+            ZoneInfo(client_timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            await websocket.send_json({'type': 'error', 'message': 'Invalid browser timezone metadata.'})
+            await websocket.close(code=1008)
+            return
+
 
     # 1. Fetch Config via Service
     agent_config, biz_config = await VoiceService.get_session_config(agent_id)
@@ -53,6 +65,7 @@ async def web_call_stream(websocket: WebSocket, agent_id: int):
             agent_id=agent_id,
             openai_api_key=settings.OPENAI_API_KEY,
             realtime_only=True,
+            client_timezone=client_timezone,
         )
         realtime_client = create_realtime_client(agent=voice_agent, channel="browser")
     except RealtimeProviderError as exc:
