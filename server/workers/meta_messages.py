@@ -211,6 +211,7 @@ def response_window_open(event):
 
 async def reserve_generation(event_id, owner, agent, policy):
     from services.usage_service import UsageService
+    from services.billing_scope import billing_workspace_ids, lock_billing_account
     async with AsyncSessionLocal() as db:
         async with db.begin():
             event = await owned(db, event_id, owner)
@@ -218,12 +219,12 @@ async def reserve_generation(event_id, owner, agent, policy):
                 return False
             # Serialize quota reservations across both Meta channels for the
             # workspace. The short transaction ends before any AI execution.
-            if db.bind.dialect.name == 'postgresql':
-                await db.execute(text('SELECT id FROM business_business WHERE id = :id FOR UPDATE'), {'id': event.business_id})
+            await lock_billing_account(db, event.business_id)
             if not policy:
+                covered_ids = await billing_workspace_ids(db, event.business_id)
                 remaining = await UsageService.get_remaining_usage(db, event.business_id, 'sms')
                 reserved = (await db.execute(select(func.count(Event.id)).where(
-                    Event.business_id == event.business_id, Event.id != event.id,
+                    Event.business_id.in_(covered_ids), Event.id != event.id,
                     Event.status.in_(['generating', 'prepared', 'sending', 'delivered']),
                     Event.usage_charged.is_(False), Event.usage_precharged.is_(False),
                 ))).scalar_one()
@@ -237,27 +238,27 @@ async def reserve_generation(event_id, owner, agent, policy):
 async def finalize_delivery(event_id, owner):
     """Charge once and save the sent reply in the same database transaction."""
     from models.subscription import Subscription, UsageTracker, CreditBalance, SubscriptionPlan
+    from services.billing_scope import lock_billing_account
+    from services.usage_service import UsageService
     async with AsyncSessionLocal() as db:
         async with db.begin():
             event = await owned(db, event_id, owner)
             if not event.provider_message_id:
                 raise LeaseLost()
             if not event.usage_charged and not event.usage_precharged:
-                subscription = (await db.execute(select(Subscription).where(
-                    Subscription.business_id == event.business_id, Subscription.status.in_(['active', 'trialing']),
-                    Subscription.ended_at.is_(None),
-                ).order_by(Subscription.id.desc()).limit(1))).scalar_one_or_none()
+                billing_id = await lock_billing_account(db, event.business_id)
+                subscription, current_tracker = await UsageService.get_active_usage_tracker(db, event.business_id)
                 if subscription:
                     tracker = (await db.execute(select(UsageTracker).where(
-                        UsageTracker.subscription_id == subscription.id,
-                    ).order_by(UsageTracker.id.desc()).limit(1).with_for_update())).scalar_one_or_none()
+                        UsageTracker.id == current_tracker.id,
+                    ).with_for_update())).scalar_one_or_none() if current_tracker else None
                     plan = await db.get(SubscriptionPlan, subscription.plan_id)
                     limit = (plan.usage_limits or {}).get('sms', 0) if plan else 0
-                    if tracker and (not limit or tracker.sms_used < limit):
+                    if tracker and (limit is None or tracker.sms_used < limit):
                         tracker.sms_used += 1
                     else:
                         balance = (await db.execute(select(CreditBalance).where(
-                            CreditBalance.business_id == event.business_id,
+                            CreditBalance.business_id == billing_id,
                         ).with_for_update())).scalar_one_or_none()
                         credits = dict(balance.additional_limits or {}) if balance else {}
                         if balance and credits.get('sms', 0) > 0:

@@ -97,7 +97,8 @@ class EmbeddingProvider:
         policy = await LifetimeRuntime.context(business_id, purpose='embedding', feature='custom_knowledge_base')
         if policy:
             operation = f'embedding:{uuid4().hex}'
-            await LifetimeRuntime.reserve(business_id, operation)
+            reserved = await LifetimeRuntime.reserve_context(business_id, operation, purpose='embedding', feature='custom_knowledge_base')
+            policy.update(reserved)
             await LifetimeRuntime.settle(business_id, operation, 1)
             # Tenant clients never enter the global provider/model cache, including after key rotation.
             return cls._create_embedder('openai', policy['model'], policy['api_key'])

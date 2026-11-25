@@ -62,5 +62,12 @@ class LifetimeRuntime:
         return result['reserved_units']
 
     @classmethod
+    async def reserve_context(cls, business_id, operation_key, purpose='text', usage_type='sms', units=1, partial=False, feature=None):
+        """Return credentials bound to the funding source actually debited."""
+        return await cls.request(business_id, action='reserve', operation_key=operation_key,
+                                 purpose=purpose, usage_type=usage_type, units=units,
+                                 partial=partial, feature=feature)
+
+    @classmethod
     async def settle(cls, business_id, operation_key, units):
         return await cls.request(business_id, action='settle', operation_key=operation_key, units=units)

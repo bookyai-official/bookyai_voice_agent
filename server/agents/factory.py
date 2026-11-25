@@ -30,7 +30,8 @@ class AgentFactory:
         agent_id: int, 
         openai_api_key: str,
         twilio_client: Optional[Any] = None,
-        call_sid: Optional[str] = None
+        call_sid: Optional[str] = None,
+        runtime_policy: Optional[dict] = None,
     ) -> SMSAgent:
         """
         Loads agent configuration from DB and returns a configured SMSAgent.
@@ -51,7 +52,7 @@ class AgentFactory:
             sys_result = await session.execute(select(SystemSetting).limit(1))
             sys_settings = sys_result.scalar_one_or_none() or SystemSetting()
             text_model = sys_settings.ai_model('text')
-            policy = await LifetimeRuntime.context(agent_config.business_id, purpose='text')
+            policy = runtime_policy or await LifetimeRuntime.context(agent_config.business_id, purpose='text')
             if policy:
                 openai_api_key, text_model = policy['api_key'], policy['model']
 
@@ -80,11 +81,12 @@ class AgentFactory:
     async def get_voice_runtime_settings(
         business_id: str,
         session: AsyncSession,
+        runtime_policy: Optional[dict] = None,
     ) -> Tuple[SystemSetting, Optional[dict]]:
         """Load settings with the supplied DB session and reject unavailable voice providers."""
         result = await session.execute(select(SystemSetting).limit(1))
         sys_settings = result.scalar_one_or_none() or SystemSetting()
-        policy = await LifetimeRuntime.context(
+        policy = runtime_policy if runtime_policy is not None else await LifetimeRuntime.context(
             business_id, purpose='realtime', feature='calling_agent'
         )
         realtime_model = policy['model'] if policy else sys_settings.ai_model('realtime')
@@ -107,6 +109,7 @@ class AgentFactory:
         call_sid: Optional[str] = None,
         realtime_only: bool = False,
         client_timezone: Optional[str] = None,
+        runtime_policy: Optional[dict] = None,
     ) -> VoiceAgent:
         """
         Loads agent configuration from DB and returns a configured VoiceAgent.
@@ -124,7 +127,7 @@ class AgentFactory:
 
             # 2. Resolve the effective model and validate its realtime provider.
             sys_settings, policy = await AgentFactory.get_voice_runtime_settings(
-                agent_config.business_id, session
+                agent_config.business_id, session, runtime_policy=runtime_policy
             )
             realtime_model = sys_settings.ai_model('realtime')
             if policy:

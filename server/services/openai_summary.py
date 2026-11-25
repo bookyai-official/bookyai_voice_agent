@@ -42,7 +42,8 @@ async def generate_call_summary(transcript: List[Dict[str, str]], business_id=No
         # 3. Initialize LLM via utility (supports multiple providers)
         if policy:
             operation = f'summary:{uuid4().hex}'
-            await LifetimeRuntime.reserve(business_id, operation)
+            reserved = await LifetimeRuntime.reserve_context(business_id, operation, purpose='summary', feature='calling_agent')
+            policy.update(reserved)
             await LifetimeRuntime.settle(business_id, operation, 1)
             formatted_transcript = formatted_transcript[:40000]
         chat_model = get_llm(

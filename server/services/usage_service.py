@@ -1,9 +1,11 @@
 import logging
 from sqlalchemy.future import select
+from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from models.subscription import Subscription, UsageTracker, CreditBalance, SubscriptionPlan
 from datetime import datetime, timezone
 from services.lifetime_runtime import LifetimeRuntime
+from services.billing_scope import billing_business_id, lock_billing_account, subscription_covers_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +15,8 @@ class UsageService:
         """
         Fetches the active subscription and its current usage tracker for a business.
         """
-        business_id = str(business_id)
+        requested_id = str(business_id)
+        business_id = await billing_business_id(db, business_id)
 
         # 1. Get active/trialing subscription
         stmt = (
@@ -21,7 +24,9 @@ class UsageService:
             .where(
                 Subscription.business_id == business_id,
                 Subscription.status.in_(['active', 'trialing']),
-                Subscription.ended_at == None
+                Subscription.ended_at.is_(None),
+                or_(Subscription.current_period_end.is_(None), Subscription.current_period_end > func.now()),
+                or_(Subscription.status != 'trialing', Subscription.trial_end.is_(None), Subscription.trial_end > func.now()),
             )
             .order_by(Subscription.id.desc())
             .limit(1)
@@ -31,11 +36,15 @@ class UsageService:
         
         if not subscription:
             return None, None
+        if not await subscription_covers_workspace(db, requested_id, subscription):
+            return None, None
 
         # 2. Get the usage tracker for this subscription
         stmt = (
             select(UsageTracker)
-            .where(UsageTracker.subscription_id == subscription.id)
+            .where(UsageTracker.subscription_id == subscription.id,
+                   UsageTracker.period_start == subscription.current_period_start,
+                   UsageTracker.period_end == subscription.current_period_end)
             .order_by(UsageTracker.id.desc())
             .limit(1)
         )
@@ -91,6 +100,7 @@ class UsageService:
         if not subscription:
             logger.warning(f"No active subscription found for Business {business_id}")
             return False
+        business_id = str(subscription.business_id)
 
         # Get the plan to check limits
         stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
@@ -103,8 +113,8 @@ class UsageService:
         limits = plan.usage_limits if isinstance(plan.usage_limits, dict) else {}
         limit = limits.get(usage_type, 0)
         
-        # 0 means unlimited
-        if limit == 0:
+        # Only an explicit JSON null is unlimited. Zero grants no allowance.
+        if limit is None:
             return True
 
         used = getattr(tracker, f"{usage_type}_used", 0) if tracker else 0
@@ -141,6 +151,7 @@ class UsageService:
         
         if not subscription:
             return 0
+        business_id = str(subscription.business_id)
 
         # Get the plan to check limits
         stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
@@ -161,7 +172,7 @@ class UsageService:
         additional_limits = balance.additional_limits if (balance and isinstance(balance.additional_limits, dict)) else {}
         additional = additional_limits.get(usage_type, 0)
 
-        if limit == 0:
+        if limit is None:
             return 999999 # Effectively unlimited
 
         remaining_from_plan = max(0, limit - used)
@@ -176,7 +187,7 @@ class UsageService:
         if await LifetimeRuntime.context(business_id):
             # LTD is reserved before provider work in the execution path, never charged twice here.
             return
-        business_id = str(business_id)
+        business_id = await lock_billing_account(db, business_id)
 
         subscription, tracker = await UsageService.get_active_usage_tracker(db, business_id)
         
@@ -191,41 +202,25 @@ class UsageService:
         limits = plan.usage_limits if (plan and isinstance(plan.usage_limits, dict)) else {}
         limit = limits.get(usage_type, 0)
 
-        # 2. Update UsageTracker
+        # Lock both rows, then split usage across allowance and purchased credits.
         if tracker:
-            used = getattr(tracker, f"{usage_type}_used", 0)
-            
-            # If we are under the monthly limit OR there's no credit balance to use, update the tracker
-            # This ensures we always record the usage somewhere.
-            if limit == 0 or used < limit:
-                setattr(tracker, f"{usage_type}_used", used + amount)
-                await db.commit()
-                return
-
-        # 3. If limit reached, try to consume from CreditBalance
-        stmt = select(CreditBalance).where(CreditBalance.business_id == business_id)
-        result = await db.execute(stmt)
-        balance = result.scalar_one_or_none()
-        
-        if balance:
-            additional_limits = balance.additional_limits if isinstance(balance.additional_limits, dict) else {}
-            additional = additional_limits.get(usage_type, 0)
-            if additional > 0:
-                # Deduct from additional credits
-                new_val = max(0, additional - amount)
-                new_limits = dict(additional_limits)
-                new_limits[usage_type] = new_val
-                balance.additional_limits = new_limits
-                await db.commit()
-                logger.info(f"Deducted {amount} {usage_type} from CreditBalance for Business {business_id}")
-                return
-        
-        # 4. Final fallback: If we are over the limit and have no credits, we still increment the tracker
-        # so the user can see the overage in their dashboard.
-        if tracker:
-            used = getattr(tracker, f"{usage_type}_used", 0)
-            setattr(tracker, f"{usage_type}_used", used + amount)
-            await db.commit()
-            logger.info(f"Incremented over-limit usage for Business {business_id} on UsageTracker")
-        else:
-            logger.warning(f"Usage updated for Business {business_id} but no tracker or credits found to update.")
+            tracker = (await db.execute(select(UsageTracker).where(
+                UsageTracker.id == tracker.id).with_for_update())).scalar_one()
+        used = getattr(tracker, f"{usage_type}_used", 0) if tracker else 0
+        allowance_remaining = amount if limit is None else max(0, limit - used)
+        allowance = min(amount, allowance_remaining) if tracker else 0
+        if tracker and allowance:
+            setattr(tracker, f"{usage_type}_used", used + allowance)
+        credits_needed = amount - allowance
+        if credits_needed:
+            balance = (await db.execute(select(CreditBalance).where(
+                CreditBalance.business_id == business_id).with_for_update())).scalar_one_or_none()
+            values = dict(balance.additional_limits or {}) if balance else {}
+            debit = min(credits_needed, values.get(usage_type, 0))
+            if balance and debit:
+                values[usage_type] -= debit
+                balance.additional_limits = values
+            # Preserve visibility of provider usage that was already incurred.
+            if tracker and credits_needed > debit:
+                setattr(tracker, f"{usage_type}_used", getattr(tracker, f"{usage_type}_used") + credits_needed - debit)
+        await db.commit()

@@ -9,14 +9,17 @@ All ingestion runs asynchronously via FastAPI BackgroundTasks.
 import os
 import logging
 import tempfile
+import asyncio
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import update
 from sqlalchemy.orm import selectinload
 
-from core.database import get_db
+from core.database import get_db, AsyncSessionLocal
 from api.dependencies import verify_token
 from models.knowledge import KnowledgeBase, KnowledgeDocument, IngestionJob
 from schemas.knowledge import (
@@ -26,6 +29,7 @@ from schemas.knowledge import (
     KnowledgeDocumentRead,
     IngestionJobRead,
     URLIngestRequest,
+    URLBatchIngestRequest,
 )
 from rag.ingestor import KnowledgeIngestor
 from rag.pinecone_client import PineconeClientManager
@@ -47,6 +51,8 @@ ALLOWED_FILE_EXTENSIONS = {
     ".docx": "docx",
     ".md": "markdown",
 }
+
+INGESTION_SLOTS = asyncio.Semaphore(3)
 
 
 # ── Background Task ──────────────────────────────────────────────────────────
@@ -72,12 +78,21 @@ async def run_ingestion(
         temp_file_path: Optional path to a temp file to delete after ingestion.
     """
     try:
-        await KnowledgeIngestor.ingest(
-            document_id=document_id,
-            job_id=job_id,
-            source_path=source_path,
-            index_name=index_name,
-        )
+        async with INGESTION_SLOTS:
+            async with AsyncSessionLocal() as db:
+                claimed = await db.execute(update(IngestionJob).where(
+                    IngestionJob.id == job_id, IngestionJob.document_id == document_id,
+                    IngestionJob.status == 'queued',
+                ).values(status='processing', started_at=datetime.now(timezone.utc)))
+                await db.commit()
+                if claimed.rowcount != 1:
+                    return  # A repeated queue acknowledgement cannot run a job twice.
+            await KnowledgeIngestor.ingest(document_id=document_id, job_id=job_id,
+                                           source_path=source_path, index_name=index_name)
+    except Exception:
+        logger.exception('Unable to start knowledge ingestion for document %s', document_id)
+        async with AsyncSessionLocal() as db:
+            await KnowledgeIngestor._mark_failed(db, document_id, job_id, 'Import could not start. Please retry this document.')
     finally:
         # Clean up temp file if one was created for this ingestion
         if temp_file_path and os.path.exists(temp_file_path):
@@ -331,6 +346,42 @@ async def ingest_url(
 
 # ── 6. List Documents ─────────────────────────────────────────────────────────
 
+async def run_url_batch(items):
+    await asyncio.gather(*(run_ingestion(document_id=item['document_id'], job_id=item['job_id'],
+                         source_path=item['url'], index_name=PINECONE_INDEX_NAME)
+                           for item in items), return_exceptions=True)
+
+
+@router.post('/{knowledge_base_id}/documents/urls', dependencies=[Depends(verify_token)])
+async def ingest_url_batch(knowledge_base_id: int, payload: URLBatchIngestRequest,
+                           background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    kb = await _get_knowledge_base_or_404(db, knowledge_base_id)
+    if str(kb.business_id) != str(payload.business_id):
+        raise HTTPException(status_code=404, detail='Knowledge base not found.')
+    if not await UsageService.has_feature_access(db, kb.business_id, 'custom_knowledge_base'):
+        raise HTTPException(status_code=403, detail='Knowledge access is not available on this plan.')
+    queued, results, seen = [], [], set()
+    for item in payload.items:
+        if item.document_id in seen:
+            continue
+        seen.add(item.document_id)
+        result = await db.execute(select(KnowledgeDocument, IngestionJob).join(
+            IngestionJob, IngestionJob.document_id == KnowledgeDocument.id,
+        ).where(KnowledgeDocument.id == item.document_id,
+                KnowledgeDocument.knowledge_base_id == knowledge_base_id,
+                KnowledgeDocument.source_type == 'url', KnowledgeDocument.source_name == item.url,
+                IngestionJob.id == item.job_id))
+        row = result.first()
+        if not row:
+            raise HTTPException(status_code=404, detail='An import document or job was not found.')
+        document, job = row
+        if job.status == 'queued' and document.status == 'queued':
+            queued.append({'document_id': document.id, 'job_id': job.id, 'url': item.url})
+        results.append({'document_id': document.id, 'job_id': job.id, 'status': document.status})
+    if queued:
+        background_tasks.add_task(run_url_batch, queued)
+    return {'items': results}
+
 @router.get(
     "/{knowledge_base_id}/documents/",
     response_model=List[KnowledgeDocumentRead],
@@ -436,11 +487,16 @@ async def reingest_document(
     document.chunk_count = 0
     await db.commit()
 
-    # Create new ingestion job
-    job = IngestionJob(document_id=document.id, status="queued")
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
+    # Django may already have created this attempt. Reuse that exact queued job
+    # rather than leaving a second, permanently queued record behind.
+    job = (await db.execute(select(IngestionJob).where(
+        IngestionJob.document_id == document.id, IngestionJob.status == 'queued',
+    ).order_by(IngestionJob.id.desc()).limit(1))).scalar_one_or_none()
+    if job is None:
+        job = IngestionJob(document_id=document.id, status='queued')
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
 
     # Determine source_path: for URLs it's the source_name, for files re-ingestion
     # requires the original content to still be accessible

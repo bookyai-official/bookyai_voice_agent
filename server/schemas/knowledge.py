@@ -63,6 +63,17 @@ class URLIngestRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2000)
 
 
+class URLBatchItem(BaseModel):
+    document_id: int = Field(gt=0)
+    job_id: int = Field(gt=0)
+    url: str = Field(min_length=1, max_length=500)
+
+
+class URLBatchIngestRequest(BaseModel):
+    business_id: str
+    items: List[URLBatchItem] = Field(min_length=1, max_length=20)
+
+
 # ── IngestionJob Schemas ──────────────────────────────────────────────────────
 
 class IngestionJobRead(BaseModel):

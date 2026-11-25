@@ -10,6 +10,7 @@ class SubscriptionPlan(Base):
     name = Column(String(100))
     allowed_features = Column(JSON, default=list, nullable=True)
     usage_limits = Column(JSON, default=dict, nullable=True)
+    byok_usage_limits = Column(JSON, default=dict, nullable=True)
     is_active = Column(Boolean, default=True)
 
 
@@ -22,6 +23,7 @@ class Subscription(Base):
     status = Column(String(30))
     current_period_start = Column(DateTime)
     current_period_end = Column(DateTime)
+    trial_end = Column(DateTime, nullable=True)
     ended_at = Column(DateTime, nullable=True)
     
     plan = relationship("SubscriptionPlan")
@@ -35,6 +37,8 @@ class UsageTracker(Base):
     period_end = Column(DateTime)
     minutes_used = Column(Integer, default=0)
     sms_used = Column(Integer, default=0)
+    byok_minutes_used = Column(Integer, default=0)
+    byok_sms_used = Column(Integer, default=0)
     
     subscription = relationship("Subscription")
 

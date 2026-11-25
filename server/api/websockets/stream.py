@@ -1,4 +1,4 @@
-from services.lifetime_runtime import LifetimeRuntime
+from services.lifetime_runtime import LifetimeRuntime, RuntimeDenied
 import math
 import uuid
 import json
@@ -75,7 +75,24 @@ async def twilio_media_stream(
     if voice_agent.runtime_policy:
         lifetime_operation = f'voice:{uuid.uuid4().hex}'
         requested_minutes = min(10, agent_config.max_call_duration_minutes or 10)
-        lifetime_units = await LifetimeRuntime.reserve(agent_config.business_id, lifetime_operation, 'minutes', requested_minutes, partial=True)
+        try:
+            reserved = await LifetimeRuntime.reserve_context(agent_config.business_id, lifetime_operation,
+                purpose='realtime', usage_type='minutes', units=requested_minutes, partial=True, feature='calling_agent')
+        except RuntimeDenied:
+            await websocket.close(code=1008, reason='Call allowance or AI key unavailable.')
+            return
+        lifetime_units = reserved['reserved_units']
+        try:
+            voice_agent = await AgentFactory.create_voice_agent(agent_id=agent_id,
+                openai_api_key=reserved['api_key'], realtime_only=True,
+                runtime_policy={**voice_agent.runtime_policy, **reserved})
+            realtime_client = create_realtime_client(agent=voice_agent, channel='twilio')
+        except Exception:
+            await LifetimeRuntime.settle(agent_config.business_id, lifetime_operation, 0)
+            await websocket.close(code=1011, reason='Unable to prepare call.')
+            return
+        if 'outbound' in direction.lower() and lead_info:
+            voice_agent.base_prompt_text += f'\n\nSPECIAL INSTRUCTIONS (Lead Information):\n{lead_info}'
         remaining_seconds = min(remaining_seconds, lifetime_units * 60)
 
     stream_sid = None

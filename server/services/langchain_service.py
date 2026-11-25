@@ -68,7 +68,12 @@ async def get_chat_response(
         billing_context['precharged'] = bool(policy)
     operation = (operation_key or f'chat:{uuid4().hex}') if policy else None
     if policy:
-        await LifetimeRuntime.reserve(agent.business_id, operation)
+        reserved = await LifetimeRuntime.reserve_context(agent.business_id, operation, purpose='text', feature=feature)
+        # Rebuild with the key bound to the reservation, even if another worker
+        # consumed the last included unit after the initial context lookup.
+        bound_policy = {**policy, **reserved}
+        factory = AgentFactory.create_voice_agent if channel == 'voice' else AgentFactory.create_sms_agent
+        agent = await factory(agent_id=agent_id, openai_api_key=reserved['api_key'], runtime_policy=bound_policy)
         # Charge before execution. Ambiguous failures must not create free unlimited provider retries.
         await LifetimeRuntime.settle(agent.business_id, operation, 1)
 

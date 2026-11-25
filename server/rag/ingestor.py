@@ -21,6 +21,7 @@ Usage:
 """
 
 import logging
+import asyncio
 import traceback
 from datetime import datetime, timezone
 from typing import List
@@ -38,7 +39,10 @@ from rag.pinecone_client import PineconeClientManager
 logger = logging.getLogger(__name__)
 
 
-from models.subscription import Subscription, SubscriptionPlan
+from models.subscription import Subscription, SubscriptionPlan, CreditBalance
+from services.billing_scope import billing_business_id, billing_workspace_ids
+from services.usage_service import UsageService
+from rag.ingestion_capacity import capacity_guard
 
 class KnowledgeIngestor:
     """
@@ -86,7 +90,7 @@ class KnowledgeIngestor:
                     "[INGESTOR] Loading %s from: %s",
                     document.source_type, source_path,
                 )
-                raw_docs = DocumentLoader.load(document.source_type, source_path)
+                raw_docs = await asyncio.to_thread(DocumentLoader.load, document.source_type, source_path)
 
                 if not raw_docs:
                     raise ValueError(f"No content extracted from '{source_path}'.")
@@ -96,59 +100,56 @@ class KnowledgeIngestor:
                 new_chars_count = len(full_content)
                 from services.lifetime_runtime import LifetimeRuntime
                 policy = await LifetimeRuntime.context(kb.business_id, feature='custom_knowledge_base')
-                if policy:
-                    if new_chars_count > 200000:
-                        raise ValueError('Lifetime document ingestion is limited to 200,000 characters per document.')
-                    kb_limit = policy['limits'].get('kb_chars', 0)
-                    if kb_limit:
-                        other = await db.execute(select(KnowledgeDocument).join(KnowledgeBase).where(
-                            KnowledgeBase.business_id == kb.business_id, KnowledgeDocument.id != document_id))
-                        if sum(len(row.content or '') for row in other.scalars().all()) + new_chars_count > kb_limit:
-                            raise ValueError('This document exceeds your lifetime knowledge-base character limit.')
+                async with capacity_guard(db, kb.business_id):
+                    if policy:
+                        if new_chars_count > 200000:
+                            raise ValueError('Lifetime document ingestion is limited to 200,000 characters per document.')
+                        kb_limit = policy['limits'].get('kb_chars', 0)
+                        if kb_limit is not None:
+                            other = await db.execute(select(KnowledgeDocument).join(KnowledgeBase).where(
+                                KnowledgeBase.business_id == kb.business_id, KnowledgeDocument.id != document_id))
+                            if sum(len(row.content or '') for row in other.scalars().all()) + new_chars_count > kb_limit:
+                                raise ValueError('This document exceeds your lifetime knowledge-base character limit.')
 
-                # Fetch active subscription and check KB character limit
-                stmt_sub = (
-                    select(Subscription)
-                    .where(
-                        Subscription.business_id == str(kb.business_id),
-                        Subscription.status.in_(['active', 'trialing']),
-                        Subscription.ended_at == None
-                    )
-                    .order_by(Subscription.id.desc())
-                    .limit(1)
-                )
-                sub_result = await db.execute(stmt_sub)
-                subscription = sub_result.scalar_one_or_none()
-                if subscription:
-                    plan_stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
-                    plan_result = await db.execute(plan_stmt)
-                    plan = plan_result.scalar_one_or_none()
-                    if plan:
-                        limits = plan.usage_limits or {}
-                        if isinstance(limits, dict):
-                            kb_chars_limit = limits.get('kb_chars', 0)
-                            if kb_chars_limit > 0:
-                                # Fetch other documents for this business to calculate current usage
-                                stmt_docs = (
-                                    select(KnowledgeDocument)
-                                    .join(KnowledgeBase)
-                                    .where(
-                                        KnowledgeBase.business_id == kb.business_id,
-                                        KnowledgeDocument.id != document_id
+                    # Fetch active subscription and check KB character limit
+                    subscription, _ = await UsageService.get_active_usage_tracker(db, kb.business_id) if not policy else (None, None)
+                    if not policy and not subscription:
+                        raise ValueError('An active plan is required before adding knowledge documents.')
+                    billing_id = str(subscription.business_id) if subscription else str(kb.business_id)
+                    covered_ids = await billing_workspace_ids(db, kb.business_id)
+                    if subscription and not policy:
+                        plan_stmt = select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
+                        plan_result = await db.execute(plan_stmt)
+                        plan = plan_result.scalar_one_or_none()
+                        if plan:
+                            limits = plan.usage_limits or {}
+                            if isinstance(limits, dict):
+                                kb_chars_limit = limits.get('kb_chars', 0)
+                                if kb_chars_limit is not None:
+                                    balance = (await db.execute(select(CreditBalance).where(
+                                        CreditBalance.business_id == billing_id))).scalar_one_or_none()
+                                    kb_chars_limit += ((balance.additional_limits or {}).get('kb_chars', 0) if balance else 0)
+                                    # Fetch other documents for this business to calculate current usage
+                                    stmt_docs = (
+                                        select(KnowledgeDocument)
+                                        .join(KnowledgeBase)
+                                        .where(
+                                            KnowledgeBase.business_id.in_(covered_ids),
+                                            KnowledgeDocument.id != document_id
+                                        )
                                     )
-                                )
-                                docs_result = await db.execute(stmt_docs)
-                                docs = docs_result.scalars().all()
-                                current_kb_chars = sum(len(d.content) for d in docs if d.content)
+                                    docs_result = await db.execute(stmt_docs)
+                                    docs = docs_result.scalars().all()
+                                    current_kb_chars = sum(len(d.content) for d in docs if d.content)
                                 
-                                if (current_kb_chars + new_chars_count) > kb_chars_limit:
-                                    raise ValueError(
-                                        f"Adding this document would exceed your plan's Knowledge Base limit of {kb_chars_limit} characters. "
-                                        f"(Currently using {current_kb_chars} characters, this document has {new_chars_count} characters)."
-                                    )
+                                    if (current_kb_chars + new_chars_count) > kb_chars_limit:
+                                        raise ValueError(
+                                            f"Adding this document would exceed your plan's Knowledge Base limit of {kb_chars_limit} characters. "
+                                            f"(Currently using {current_kb_chars} characters, this document has {new_chars_count} characters)."
+                                        )
 
-                document.content = full_content
-                await db.commit()
+                    document.content = full_content
+                    await db.commit()
 
 
                 # ── 4. Split into chunks with tenant metadata ─────────────
@@ -206,6 +207,7 @@ class KnowledgeIngestor:
                 )
 
             except Exception as e:
+                await db.rollback()
                 # ── Failure path — update DB and log full traceback ────────
                 private = bool(locals().get('policy'))
                 error_msg = 'Knowledge processing failed. Check API key permissions, document size, and usage allowance.' if private else f'{type(e).__name__}: {e}'
